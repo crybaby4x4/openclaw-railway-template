@@ -1135,14 +1135,18 @@ proxy.on("error", (err, _req, res) => {
   }
 });
 
+const PROXY_ORIGIN = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : GATEWAY_TARGET;
+
 proxy.on("proxyReq", (proxyReq, req, res) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_TARGET);
+  proxyReq.setHeader("Origin", PROXY_ORIGIN);
 });
 
 proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_TARGET);
+  proxyReq.setHeader("Origin", PROXY_ORIGIN);
 });
 
 app.use(async (req, res) => {
