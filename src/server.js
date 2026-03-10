@@ -173,9 +173,29 @@ async function syncAllowedOrigins() {
 let gatewayProc = null;
 let gatewayStarting = null;
 let shuttingDown = false;
+let gatewayManagedExternally = false;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function isGatewayReachable({ timeoutMs = 1500 } = {}) {
+  const endpoints = ["/openclaw", "/", "/health"];
+  for (const endpoint of endpoints) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${GATEWAY_TARGET}${endpoint}`, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res) return true;
+    } catch {
+      clearTimeout(timeout);
+    }
+  }
+  return false;
 }
 
 async function waitForGatewayReady(opts = {}) {
@@ -212,11 +232,25 @@ async function startGateway() {
   if (gatewayProc) return;
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
+  if (await isGatewayReachable({ timeoutMs: 1200 })) {
+    gatewayManagedExternally = true;
+    log.warn("gateway", "detected existing gateway process; using external instance");
+    return;
+  }
+
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
   const stopResult = await runCmd(OPENCLAW_NODE, clawArgs(["gateway", "stop"]));
   log.info("gateway", `stop existing gateway exit=${stopResult.code}`);
+  if (stopResult.code !== 0) {
+    log.warn("gateway", "gateway stop returned non-zero; proceeding with external gateway detection");
+    if (await isGatewayReachable({ timeoutMs: 1500 })) {
+      gatewayManagedExternally = true;
+      log.warn("gateway", "gateway still reachable after stop; using external instance");
+      return;
+    }
+  }
 
   const args = [
     "gateway",
@@ -240,6 +274,7 @@ async function startGateway() {
       OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
     },
   });
+  gatewayManagedExternally = false;
 
   const safeArgs = args.map((arg, i) =>
     args[i - 1] === "--token" ? "[REDACTED]" : arg
@@ -260,11 +295,17 @@ async function startGateway() {
     if (!shuttingDown && isConfigured()) {
       log.info("gateway", "scheduling auto-restart in 2s...");
       setTimeout(() => {
-        if (!shuttingDown && !gatewayProc && isConfigured()) {
+        if (shuttingDown || gatewayProc || !isConfigured()) return;
+        (async () => {
+          if (await isGatewayReachable({ timeoutMs: 1500 })) {
+            gatewayManagedExternally = true;
+            log.warn("gateway", "external gateway is active; skipping auto-restart");
+            return;
+          }
           ensureGatewayRunning().catch((err) => {
             log.error("gateway", `auto-restart failed: ${err.message}`);
           });
-        }
+        })();
       }, 2000);
     }
   });
@@ -273,6 +314,11 @@ async function startGateway() {
 async function ensureGatewayRunning() {
   if (!isConfigured()) return { ok: false, reason: "not configured" };
   if (gatewayProc) return { ok: true };
+  if (gatewayManagedExternally) {
+    const reachable = await isGatewayReachable({ timeoutMs: 1500 });
+    if (reachable) return { ok: true };
+    gatewayManagedExternally = false;
+  }
   if (!gatewayStarting) {
     gatewayStarting = (async () => {
       await syncAllowedOrigins();
@@ -294,10 +340,11 @@ function isGatewayStarting() {
 }
 
 function isGatewayReady() {
-  return gatewayProc !== null && gatewayStarting === null;
+  return (gatewayProc !== null || gatewayManagedExternally) && gatewayStarting === null;
 }
 
 async function restartGateway() {
+  gatewayManagedExternally = false;
   if (gatewayProc) {
     try {
       gatewayProc.kill("SIGTERM");
