@@ -133,8 +133,7 @@ const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "openvscode-serve
 const CODE_SERVER_PORT = Number.parseInt(process.env.CODE_SERVER_PORT ?? "13337", 10);
 const CODE_SERVER_HOST = process.env.CODE_SERVER_HOST?.trim() || "127.0.0.1";
 const CODE_SERVER_BASE_PATH = process.env.CODE_SERVER_BASE_PATH?.trim() || "/vscode";
-const CODE_SERVER_USERNAME = process.env.CODE_SERVER_USERNAME?.trim() || "admin";
-const CODE_SERVER_PASSWORD = process.env.CODE_SERVER_PASSWORD?.trim() || "";
+const CODE_SERVER_ACCESS_TOKEN = process.env.CODE_SERVER_ACCESS_TOKEN?.trim() || "";
 const CODE_SERVER_WORKDIR =
   process.env.CODE_SERVER_WORKDIR?.trim() || WORKSPACE_DIR;
 const CODE_SERVER_TARGET = `http://${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`;
@@ -355,9 +354,9 @@ async function waitForCodeServerReady(opts = {}) {
 async function startCodeServer() {
   if (codeServerProc) return;
   if (!ENABLE_CODE_SERVER) return;
-  if (!CODE_SERVER_PASSWORD) {
+  if (!CODE_SERVER_ACCESS_TOKEN) {
     throw new Error(
-      "CODE_SERVER_PASSWORD is empty. Set CODE_SERVER_PASSWORD when ENABLE_CODE_SERVER=true.",
+      "CODE_SERVER_ACCESS_TOKEN is empty. Set CODE_SERVER_ACCESS_TOKEN when ENABLE_CODE_SERVER=true.",
     );
   }
 
@@ -372,7 +371,6 @@ async function startCodeServer() {
     String(CODE_SERVER_PORT),
     "--server-base-path",
     CODE_SERVER_BASE_PATH,
-    "--without-connection-token",
     "--accept-server-license-terms",
     "--disable-update-check",
     "--disable-telemetry",
@@ -384,6 +382,7 @@ async function startCodeServer() {
     CODE_SERVER_EXTENSIONS_DIR,
     CODE_SERVER_WORKDIR,
   ];
+  args.push("--connection-token", CODE_SERVER_ACCESS_TOKEN);
 
   codeServerProc = childProcess.spawn(CODE_SERVER_BIN, args, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -1115,18 +1114,13 @@ app.get("/tui", requireSetupAuth, (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "tui.html"));
 });
 
-app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
+app.use(CODE_SERVER_BASE_PATH, async (req, res) => {
   if (!ENABLE_CODE_SERVER) {
     return res
       .status(403)
       .type("text/plain")
       .send("VSCode service is disabled. Set ENABLE_CODE_SERVER=true to enable it.");
   }
-  if (!verifyCodeServerAuth(req)) {
-    res.set("WWW-Authenticate", 'Basic realm="OpenVSCode"');
-    return res.status(401).type("text/plain").send("VSCode auth required");
-  }
-
   try {
     await ensureCodeServerRunning();
   } catch (err) {
@@ -1136,7 +1130,16 @@ app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
 
   const originalUrl = req.url;
   try {
-    req.url = req.originalUrl || req.url || "/";
+    let proxiedUrl = req.originalUrl || req.url || "/";
+    const parsed = new URL(proxiedUrl, "http://localhost");
+    const token = parsed.searchParams.get("token");
+    const tkn = parsed.searchParams.get("tkn");
+    if (token && !tkn) {
+      parsed.searchParams.set("tkn", token);
+      parsed.searchParams.delete("token");
+    }
+    proxiedUrl = `${parsed.pathname}${parsed.search}`;
+    req.url = proxiedUrl;
     return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
   } finally {
     req.url = originalUrl;
@@ -1156,31 +1159,6 @@ function verifyTuiAuth(req) {
   const passwordHash = crypto.createHash("sha256").update(password).digest();
   const expectedHash = crypto.createHash("sha256").update(SETUP_PASSWORD).digest();
   return crypto.timingSafeEqual(passwordHash, expectedHash);
-}
-
-function verifyCodeServerAuth(req) {
-  if (!CODE_SERVER_USERNAME || !CODE_SERVER_PASSWORD) return false;
-  const header = req.headers.authorization || "";
-  const [scheme, encoded] = header.split(" ");
-  if (scheme !== "Basic" || !encoded) return false;
-  const decoded = Buffer.from(encoded, "base64").toString("utf8");
-  const idx = decoded.indexOf(":");
-  const username = idx >= 0 ? decoded.slice(0, idx) : "";
-  const password = idx >= 0 ? decoded.slice(idx + 1) : "";
-  const usernameHash = crypto.createHash("sha256").update(username).digest();
-  const expectedUsernameHash = crypto
-    .createHash("sha256")
-    .update(CODE_SERVER_USERNAME)
-    .digest();
-  const passwordHash = crypto.createHash("sha256").update(password).digest();
-  const expectedPasswordHash = crypto
-    .createHash("sha256")
-    .update(CODE_SERVER_PASSWORD)
-    .digest();
-  return (
-    crypto.timingSafeEqual(usernameHash, expectedUsernameHash) &&
-    crypto.timingSafeEqual(passwordHash, expectedPasswordHash)
-  );
 }
 
 function createTuiWebSocketServer(httpServer) {
@@ -1407,7 +1385,7 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `vscode web: ${ENABLE_CODE_SERVER ? "enabled" : "disabled"}`);
   if (ENABLE_CODE_SERVER) {
-    log.info("wrapper", "vscode auth: setup basic auth + OpenVSCode basic auth");
+    log.info("wrapper", "vscode auth: OpenVSCode token");
   }
   log.info("wrapper", `configured: ${isConfigured()}`);
 
@@ -1469,21 +1447,6 @@ server.on("upgrade", async (req, socket, head) => {
     (url.pathname === CODE_SERVER_BASE_PATH ||
       url.pathname.startsWith(`${CODE_SERVER_BASE_PATH}/`))
   ) {
-    if (!verifyTuiAuth(req)) {
-      socket.write(
-        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenClaw Setup\"\r\n\r\n",
-      );
-      socket.destroy();
-      return;
-    }
-    if (!verifyCodeServerAuth(req)) {
-      socket.write(
-        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenVSCode\"\r\n\r\n",
-      );
-      socket.destroy();
-      return;
-    }
-
     try {
       await ensureCodeServerRunning();
     } catch (err) {
@@ -1492,7 +1455,16 @@ server.on("upgrade", async (req, socket, head) => {
       return;
     }
     const originalUrl = req.url;
-    req.url = req.url || `${CODE_SERVER_BASE_PATH}/`;
+    let proxiedUrl = req.url || `${CODE_SERVER_BASE_PATH}/`;
+    const parsed = new URL(proxiedUrl, "http://localhost");
+    const token = parsed.searchParams.get("token");
+    const tkn = parsed.searchParams.get("tkn");
+    if (token && !tkn) {
+      parsed.searchParams.set("tkn", token);
+      parsed.searchParams.delete("token");
+    }
+    proxiedUrl = `${parsed.pathname}${parsed.search}`;
+    req.url = proxiedUrl;
     codeProxy.ws(req, socket, head, { target: CODE_SERVER_TARGET });
     req.url = originalUrl;
     return;
