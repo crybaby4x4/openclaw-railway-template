@@ -87,6 +87,7 @@ The template can expose a browser-based VSCode service via `OpenVSCode Server`.
 Set `ENABLE_CODE_SERVER=true` in Railway Variables.
 
 Once enabled, access it at `/vscode`. Access is protected by the same Basic Auth password used by `/setup` (`SETUP_PASSWORD`).
+Editing access is additionally protected by OpenVSCode Basic Auth using `CODE_SERVER_USERNAME` and `CODE_SERVER_PASSWORD`.
 
 ### Configuration
 
@@ -96,6 +97,8 @@ Once enabled, access it at `/vscode`. Access is protected by the same Basic Auth
 | `CODE_SERVER_PORT` | `13337` | Internal OpenVSCode port |
 | `CODE_SERVER_HOST` | `127.0.0.1` | Internal bind host |
 | `CODE_SERVER_BASE_PATH` | `/vscode` | Public path prefix |
+| `CODE_SERVER_USERNAME` | `admin` | OpenVSCode username |
+| `CODE_SERVER_PASSWORD` | empty | OpenVSCode password (required when enabled) |
 | `CODE_SERVER_WORKDIR` | `${OPENCLAW_WORKSPACE_DIR}` | Directory opened in editor |
 | `CODE_SERVER_DATA_DIR` | `${OPENCLAW_STATE_DIR}/code-server` | VSCode user data directory |
 | `CODE_SERVER_EXTENSIONS_DIR` | `${CODE_SERVER_DATA_DIR}/extensions` | VSCode extensions directory |

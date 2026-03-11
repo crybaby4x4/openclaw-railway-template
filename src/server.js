@@ -133,6 +133,8 @@ const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "openvscode-serve
 const CODE_SERVER_PORT = Number.parseInt(process.env.CODE_SERVER_PORT ?? "13337", 10);
 const CODE_SERVER_HOST = process.env.CODE_SERVER_HOST?.trim() || "127.0.0.1";
 const CODE_SERVER_BASE_PATH = process.env.CODE_SERVER_BASE_PATH?.trim() || "/vscode";
+const CODE_SERVER_USERNAME = process.env.CODE_SERVER_USERNAME?.trim() || "admin";
+const CODE_SERVER_PASSWORD = process.env.CODE_SERVER_PASSWORD?.trim() || "";
 const CODE_SERVER_WORKDIR =
   process.env.CODE_SERVER_WORKDIR?.trim() || WORKSPACE_DIR;
 const CODE_SERVER_TARGET = `http://${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`;
@@ -353,6 +355,11 @@ async function waitForCodeServerReady(opts = {}) {
 async function startCodeServer() {
   if (codeServerProc) return;
   if (!ENABLE_CODE_SERVER) return;
+  if (!CODE_SERVER_PASSWORD) {
+    throw new Error(
+      "CODE_SERVER_PASSWORD is empty. Set CODE_SERVER_PASSWORD when ENABLE_CODE_SERVER=true.",
+    );
+  }
 
   fs.mkdirSync(CODE_SERVER_DATA_DIR, { recursive: true });
   fs.mkdirSync(CODE_SERVER_EXTENSIONS_DIR, { recursive: true });
@@ -1115,6 +1122,10 @@ app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
       .type("text/plain")
       .send("VSCode service is disabled. Set ENABLE_CODE_SERVER=true to enable it.");
   }
+  if (!verifyCodeServerAuth(req)) {
+    res.set("WWW-Authenticate", 'Basic realm="OpenVSCode"');
+    return res.status(401).type("text/plain").send("VSCode auth required");
+  }
 
   try {
     await ensureCodeServerRunning();
@@ -1145,6 +1156,31 @@ function verifyTuiAuth(req) {
   const passwordHash = crypto.createHash("sha256").update(password).digest();
   const expectedHash = crypto.createHash("sha256").update(SETUP_PASSWORD).digest();
   return crypto.timingSafeEqual(passwordHash, expectedHash);
+}
+
+function verifyCodeServerAuth(req) {
+  if (!CODE_SERVER_USERNAME || !CODE_SERVER_PASSWORD) return false;
+  const header = req.headers.authorization || "";
+  const [scheme, encoded] = header.split(" ");
+  if (scheme !== "Basic" || !encoded) return false;
+  const decoded = Buffer.from(encoded, "base64").toString("utf8");
+  const idx = decoded.indexOf(":");
+  const username = idx >= 0 ? decoded.slice(0, idx) : "";
+  const password = idx >= 0 ? decoded.slice(idx + 1) : "";
+  const usernameHash = crypto.createHash("sha256").update(username).digest();
+  const expectedUsernameHash = crypto
+    .createHash("sha256")
+    .update(CODE_SERVER_USERNAME)
+    .digest();
+  const passwordHash = crypto.createHash("sha256").update(password).digest();
+  const expectedPasswordHash = crypto
+    .createHash("sha256")
+    .update(CODE_SERVER_PASSWORD)
+    .digest();
+  return (
+    crypto.timingSafeEqual(usernameHash, expectedUsernameHash) &&
+    crypto.timingSafeEqual(passwordHash, expectedPasswordHash)
+  );
 }
 
 function createTuiWebSocketServer(httpServer) {
@@ -1371,7 +1407,7 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `vscode web: ${ENABLE_CODE_SERVER ? "enabled" : "disabled"}`);
   if (ENABLE_CODE_SERVER) {
-    log.info("wrapper", "vscode auth: setup basic auth");
+    log.info("wrapper", "vscode auth: setup basic auth + OpenVSCode basic auth");
   }
   log.info("wrapper", `configured: ${isConfigured()}`);
 
@@ -1436,6 +1472,13 @@ server.on("upgrade", async (req, socket, head) => {
     if (!verifyTuiAuth(req)) {
       socket.write(
         "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenClaw Setup\"\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
+    if (!verifyCodeServerAuth(req)) {
+      socket.write(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenVSCode\"\r\n\r\n",
       );
       socket.destroy();
       return;
