@@ -14,7 +14,18 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g openclaw@2026.3.8
-RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN set -eux; \
+  OPENVSCODE_TAG="$(curl -fsSL https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' | head -n1)"; \
+  ARCH="$(dpkg --print-architecture)"; \
+  case "$ARCH" in \
+    amd64) OPENVSCODE_ARCH="x64" ;; \
+    arm64) OPENVSCODE_ARCH="arm64" ;; \
+    *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+  esac; \
+  curl -fsSL "https://github.com/gitpod-io/openvscode-server/releases/download/${OPENVSCODE_TAG}/${OPENVSCODE_TAG}-linux-${OPENVSCODE_ARCH}.tar.gz" -o /tmp/openvscode-server.tar.gz; \
+  tar -xzf /tmp/openvscode-server.tar.gz -C /opt; \
+  ln -s "/opt/${OPENVSCODE_TAG}-linux-${OPENVSCODE_ARCH}/bin/openvscode-server" /usr/local/bin/openvscode-server; \
+  rm -f /tmp/openvscode-server.tar.gz
 
 WORKDIR /app
 

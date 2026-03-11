@@ -78,26 +78,24 @@ The web TUI implements multiple security layers:
 | `TUI_IDLE_TIMEOUT_MS` | `300000` (5 min) | Closes session after inactivity |
 | `TUI_MAX_SESSION_MS` | `1800000` (30 min) | Maximum session duration |
 
-## Web VSCode (code-server)
+## Web VSCode (OpenVSCode Server)
 
-The template can expose a browser-based VSCode service via `code-server`.
+The template can expose a browser-based VSCode service via `OpenVSCode Server`.
 
 ### Enabling
 
 Set `ENABLE_CODE_SERVER=true` in Railway Variables.
 
 Once enabled, access it at `/vscode`. Access is protected by the same Basic Auth password used by `/setup` (`SETUP_PASSWORD`).
-In addition, VSCode itself requires a second login password (`CODE_SERVER_PASSWORD`, falls back to `SETUP_PASSWORD` if unset).
 
 ### Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENABLE_CODE_SERVER` | `false` | Set to `true` to enable |
-| `CODE_SERVER_PORT` | `13337` | Internal code-server port |
+| `CODE_SERVER_PORT` | `13337` | Internal OpenVSCode port |
 | `CODE_SERVER_HOST` | `127.0.0.1` | Internal bind host |
 | `CODE_SERVER_BASE_PATH` | `/vscode` | Public path prefix |
-| `CODE_SERVER_PASSWORD` | `${SETUP_PASSWORD}` | code-server login password (second auth layer) |
 | `CODE_SERVER_WORKDIR` | `${OPENCLAW_WORKSPACE_DIR}` | Directory opened in editor |
 | `CODE_SERVER_DATA_DIR` | `${OPENCLAW_STATE_DIR}/code-server` | VSCode user data directory |
 | `CODE_SERVER_EXTENSIONS_DIR` | `${CODE_SERVER_DATA_DIR}/extensions` | VSCode extensions directory |

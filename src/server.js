@@ -129,12 +129,10 @@ const TUI_MAX_SESSION_MS = Number.parseInt(
   10,
 );
 const ENABLE_CODE_SERVER = process.env.ENABLE_CODE_SERVER?.toLowerCase() === "true";
-const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "code-server";
+const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "openvscode-server";
 const CODE_SERVER_PORT = Number.parseInt(process.env.CODE_SERVER_PORT ?? "13337", 10);
 const CODE_SERVER_HOST = process.env.CODE_SERVER_HOST?.trim() || "127.0.0.1";
 const CODE_SERVER_BASE_PATH = process.env.CODE_SERVER_BASE_PATH?.trim() || "/vscode";
-const CODE_SERVER_PASSWORD =
-  process.env.CODE_SERVER_PASSWORD?.trim() || SETUP_PASSWORD || "";
 const CODE_SERVER_WORKDIR =
   process.env.CODE_SERVER_WORKDIR?.trim() || WORKSPACE_DIR;
 const CODE_SERVER_TARGET = `http://${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`;
@@ -331,7 +329,7 @@ let codeServerStarting = null;
 async function waitForCodeServerReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const start = Date.now();
-  const endpoints = ["/healthz", "/"];
+  const endpoints = [`${CODE_SERVER_BASE_PATH}/`, `${CODE_SERVER_BASE_PATH}/login`];
 
   while (Date.now() - start < timeoutMs) {
     for (const endpoint of endpoints) {
@@ -355,23 +353,24 @@ async function waitForCodeServerReady(opts = {}) {
 async function startCodeServer() {
   if (codeServerProc) return;
   if (!ENABLE_CODE_SERVER) return;
-  if (!CODE_SERVER_PASSWORD) {
-    throw new Error(
-      "CODE_SERVER_PASSWORD is empty. Set CODE_SERVER_PASSWORD or SETUP_PASSWORD.",
-    );
-  }
 
   fs.mkdirSync(CODE_SERVER_DATA_DIR, { recursive: true });
   fs.mkdirSync(CODE_SERVER_EXTENSIONS_DIR, { recursive: true });
   fs.mkdirSync(CODE_SERVER_WORKDIR, { recursive: true });
 
   const args = [
-    "--bind-addr",
-    `${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`,
-    "--auth",
-    "password",
+    "--host",
+    CODE_SERVER_HOST,
+    "--port",
+    String(CODE_SERVER_PORT),
+    "--server-base-path",
+    CODE_SERVER_BASE_PATH,
+    "--without-connection-token",
+    "--accept-server-license-terms",
     "--disable-update-check",
     "--disable-telemetry",
+    "--server-data-dir",
+    CODE_SERVER_DATA_DIR,
     "--user-data-dir",
     CODE_SERVER_DATA_DIR,
     "--extensions-dir",
@@ -384,10 +383,9 @@ async function startCodeServer() {
     env: {
       ...process.env,
       // Railway injects PORT=8080; some code-server builds may honor it.
-      // Remove it so code-server binds strictly to --bind-addr.
+      // Remove it so web IDE binds strictly to explicit host/port.
       PORT: undefined,
       HOME: os.homedir(),
-      PASSWORD: CODE_SERVER_PASSWORD,
     },
   });
 
@@ -1127,7 +1125,7 @@ app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
 
   const originalUrl = req.url;
   try {
-    req.url = req.url || "/";
+    req.url = req.originalUrl || req.url || "/";
     return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
   } finally {
     req.url = originalUrl;
@@ -1373,7 +1371,7 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `vscode web: ${ENABLE_CODE_SERVER ? "enabled" : "disabled"}`);
   if (ENABLE_CODE_SERVER) {
-    log.info("wrapper", "vscode auth: setup basic auth + code-server password");
+    log.info("wrapper", "vscode auth: setup basic auth");
   }
   log.info("wrapper", `configured: ${isConfigured()}`);
 
@@ -1451,8 +1449,7 @@ server.on("upgrade", async (req, socket, head) => {
       return;
     }
     const originalUrl = req.url;
-    const nextUrl = req.url.slice(CODE_SERVER_BASE_PATH.length) || "/";
-    req.url = nextUrl.startsWith("/") ? nextUrl : `/${nextUrl}`;
+    req.url = req.url || `${CODE_SERVER_BASE_PATH}/`;
     codeProxy.ws(req, socket, head, { target: CODE_SERVER_TARGET });
     req.url = originalUrl;
     return;
