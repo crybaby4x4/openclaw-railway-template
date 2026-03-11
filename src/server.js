@@ -331,7 +331,7 @@ let codeServerStarting = null;
 async function waitForCodeServerReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const start = Date.now();
-  const endpoints = [`${CODE_SERVER_BASE_PATH}/healthz`, `${CODE_SERVER_BASE_PATH}/`];
+  const endpoints = ["/healthz", "/"];
 
   while (Date.now() - start < timeoutMs) {
     for (const endpoint of endpoints) {
@@ -370,8 +370,6 @@ async function startCodeServer() {
     `${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`,
     "--auth",
     "password",
-    "--base-path",
-    CODE_SERVER_BASE_PATH,
     "--disable-update-check",
     "--disable-telemetry",
     "--user-data-dir",
@@ -1124,7 +1122,13 @@ app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
     return res.status(503).type("text/plain").send("VSCode service is starting. Please retry.");
   }
 
-  return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
+  const originalUrl = req.url;
+  try {
+    req.url = req.url || "/";
+    return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
+  } finally {
+    req.url = originalUrl;
+  }
 });
 
 let activeTuiSession = null;
@@ -1428,7 +1432,11 @@ server.on("upgrade", async (req, socket, head) => {
       socket.destroy();
       return;
     }
+    const originalUrl = req.url;
+    const nextUrl = req.url.slice(CODE_SERVER_BASE_PATH.length) || "/";
+    req.url = nextUrl.startsWith("/") ? nextUrl : `/${nextUrl}`;
     codeProxy.ws(req, socket, head, { target: CODE_SERVER_TARGET });
+    req.url = originalUrl;
     return;
   }
 
