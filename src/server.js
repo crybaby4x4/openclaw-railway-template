@@ -383,6 +383,9 @@ async function startCodeServer() {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      // Railway injects PORT=8080; some code-server builds may honor it.
+      // Remove it so code-server binds strictly to --bind-addr.
+      PORT: undefined,
       HOME: os.homedir(),
       PASSWORD: CODE_SERVER_PASSWORD,
     },
