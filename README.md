@@ -89,8 +89,6 @@ Set `ENABLE_CODE_SERVER=true` in Railway Variables.
 Once enabled, access it at `/vscode`. Access is protected by the same Basic Auth password used by `/setup` (`SETUP_PASSWORD`).
 In addition, VSCode itself requires a second login password (`CODE_SERVER_PASSWORD`, falls back to `SETUP_PASSWORD` if unset).
 
-For best compatibility, bind a dedicated domain/subdomain to the same Railway service and set `CODE_SERVER_PUBLIC_HOST` (for example `ide.example.com`). Then access VSCode from that host directly.
-
 ### Configuration
 
 | Variable | Default | Description |
@@ -99,7 +97,6 @@ For best compatibility, bind a dedicated domain/subdomain to the same Railway se
 | `CODE_SERVER_PORT` | `13337` | Internal code-server port |
 | `CODE_SERVER_HOST` | `127.0.0.1` | Internal bind host |
 | `CODE_SERVER_BASE_PATH` | `/vscode` | Public path prefix |
-| `CODE_SERVER_PUBLIC_HOST` | empty | Optional dedicated public host for VSCode routing |
 | `CODE_SERVER_PASSWORD` | `${SETUP_PASSWORD}` | code-server login password (second auth layer) |
 | `CODE_SERVER_WORKDIR` | `${OPENCLAW_WORKSPACE_DIR}` | Directory opened in editor |
 | `CODE_SERVER_DATA_DIR` | `${OPENCLAW_STATE_DIR}/code-server` | VSCode user data directory |

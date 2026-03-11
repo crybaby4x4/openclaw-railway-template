@@ -133,7 +133,6 @@ const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "code-server";
 const CODE_SERVER_PORT = Number.parseInt(process.env.CODE_SERVER_PORT ?? "13337", 10);
 const CODE_SERVER_HOST = process.env.CODE_SERVER_HOST?.trim() || "127.0.0.1";
 const CODE_SERVER_BASE_PATH = process.env.CODE_SERVER_BASE_PATH?.trim() || "/vscode";
-const CODE_SERVER_PUBLIC_HOST = process.env.CODE_SERVER_PUBLIC_HOST?.trim() || "";
 const CODE_SERVER_PASSWORD =
   process.env.CODE_SERVER_PASSWORD?.trim() || SETUP_PASSWORD || "";
 const CODE_SERVER_WORKDIR =
@@ -144,10 +143,6 @@ const CODE_SERVER_DATA_DIR =
 const CODE_SERVER_EXTENSIONS_DIR =
   process.env.CODE_SERVER_EXTENSIONS_DIR?.trim() ||
   path.join(CODE_SERVER_DATA_DIR, "extensions");
-
-function getRequestHost(req) {
-  return (req.headers.host || "").split(":")[0].toLowerCase();
-}
 
 function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
@@ -1115,41 +1110,12 @@ app.get("/tui", requireSetupAuth, (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "tui.html"));
 });
 
-app.use(async (req, res, next) => {
-  if (!ENABLE_CODE_SERVER || !CODE_SERVER_PUBLIC_HOST) {
-    return next();
-  }
-  if (getRequestHost(req) !== CODE_SERVER_PUBLIC_HOST.toLowerCase()) {
-    return next();
-  }
-
-  if (!verifyTuiAuth(req)) {
-    res.set("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
-    return res.status(401).type("text/plain").send("Auth required");
-  }
-
-  try {
-    await ensureCodeServerRunning();
-  } catch (err) {
-    log.error("code-server", `startup failed: ${err.message}`);
-    return res.status(503).type("text/plain").send("VSCode service is starting. Please retry.");
-  }
-
-  return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
-});
-
 app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
   if (!ENABLE_CODE_SERVER) {
     return res
       .status(403)
       .type("text/plain")
       .send("VSCode service is disabled. Set ENABLE_CODE_SERVER=true to enable it.");
-  }
-
-  if (CODE_SERVER_PUBLIC_HOST) {
-    const suffix = req.originalUrl.slice(CODE_SERVER_BASE_PATH.length) || "/";
-    const normalizedSuffix = suffix.startsWith("/") ? suffix : `/${suffix}`;
-    return res.redirect(`https://${CODE_SERVER_PUBLIC_HOST}${normalizedSuffix}`);
   }
 
   try {
@@ -1356,6 +1322,21 @@ codeProxy.on("error", (err, _req, res) => {
   }
 });
 
+codeProxy.on("proxyRes", (proxyRes, _req) => {
+  // When serving code-server behind /vscode on a single domain,
+  // rewrite absolute redirects (/login, /, etc.) back under /vscode.
+  const location = proxyRes.headers.location;
+  if (!location || typeof location !== "string") return;
+  if (!location.startsWith("/")) return;
+  if (location.startsWith(`${CODE_SERVER_BASE_PATH}/`) || location === CODE_SERVER_BASE_PATH) {
+    return;
+  }
+  proxyRes.headers.location =
+    location === "/"
+      ? `${CODE_SERVER_BASE_PATH}/`
+      : `${CODE_SERVER_BASE_PATH}${location}`;
+});
+
 app.use(async (req, res) => {
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
@@ -1423,31 +1404,6 @@ const tuiWss = createTuiWebSocketServer(server);
 
 server.on("upgrade", async (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const reqHost = getRequestHost(req);
-
-  if (
-    ENABLE_CODE_SERVER &&
-    CODE_SERVER_PUBLIC_HOST &&
-    reqHost === CODE_SERVER_PUBLIC_HOST.toLowerCase()
-  ) {
-    if (!verifyTuiAuth(req)) {
-      socket.write(
-        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenClaw Setup\"\r\n\r\n",
-      );
-      socket.destroy();
-      return;
-    }
-
-    try {
-      await ensureCodeServerRunning();
-    } catch (err) {
-      log.warn("code-server", `websocket startup failed: ${err.message}`);
-      socket.destroy();
-      return;
-    }
-    codeProxy.ws(req, socket, head, { target: CODE_SERVER_TARGET });
-    return;
-  }
 
   if (url.pathname === "/tui/ws") {
     if (!ENABLE_WEB_TUI) {
