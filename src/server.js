@@ -128,6 +128,21 @@ const TUI_MAX_SESSION_MS = Number.parseInt(
   process.env.TUI_MAX_SESSION_MS ?? "1800000",
   10,
 );
+const ENABLE_CODE_SERVER = process.env.ENABLE_CODE_SERVER?.toLowerCase() === "true";
+const CODE_SERVER_BIN = process.env.CODE_SERVER_BIN?.trim() || "code-server";
+const CODE_SERVER_PORT = Number.parseInt(process.env.CODE_SERVER_PORT ?? "13337", 10);
+const CODE_SERVER_HOST = process.env.CODE_SERVER_HOST?.trim() || "127.0.0.1";
+const CODE_SERVER_BASE_PATH = process.env.CODE_SERVER_BASE_PATH?.trim() || "/vscode";
+const CODE_SERVER_PASSWORD =
+  process.env.CODE_SERVER_PASSWORD?.trim() || SETUP_PASSWORD || "";
+const CODE_SERVER_WORKDIR =
+  process.env.CODE_SERVER_WORKDIR?.trim() || WORKSPACE_DIR;
+const CODE_SERVER_TARGET = `http://${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`;
+const CODE_SERVER_DATA_DIR =
+  process.env.CODE_SERVER_DATA_DIR?.trim() || path.join(STATE_DIR, "code-server");
+const CODE_SERVER_EXTENSIONS_DIR =
+  process.env.CODE_SERVER_EXTENSIONS_DIR?.trim() ||
+  path.join(CODE_SERVER_DATA_DIR, "extensions");
 
 function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
@@ -308,6 +323,107 @@ async function restartGateway() {
     gatewayProc = null;
   }
   return ensureGatewayRunning();
+}
+
+let codeServerProc = null;
+let codeServerStarting = null;
+
+async function waitForCodeServerReady(opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const start = Date.now();
+  const endpoints = [`${CODE_SERVER_BASE_PATH}/healthz`, `${CODE_SERVER_BASE_PATH}/`];
+
+  while (Date.now() - start < timeoutMs) {
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(`${CODE_SERVER_TARGET}${endpoint}`, {
+          method: "GET",
+        });
+        if (res && res.status < 500) {
+          log.info("code-server", `ready at ${endpoint}`);
+          return true;
+        }
+      } catch {}
+    }
+    await sleep(250);
+  }
+
+  log.error("code-server", `failed to become ready after ${timeoutMs / 1000} seconds`);
+  return false;
+}
+
+async function startCodeServer() {
+  if (codeServerProc) return;
+  if (!ENABLE_CODE_SERVER) return;
+  if (!CODE_SERVER_PASSWORD) {
+    throw new Error(
+      "CODE_SERVER_PASSWORD is empty. Set CODE_SERVER_PASSWORD or SETUP_PASSWORD.",
+    );
+  }
+
+  fs.mkdirSync(CODE_SERVER_DATA_DIR, { recursive: true });
+  fs.mkdirSync(CODE_SERVER_EXTENSIONS_DIR, { recursive: true });
+  fs.mkdirSync(CODE_SERVER_WORKDIR, { recursive: true });
+
+  const args = [
+    "--bind-addr",
+    `${CODE_SERVER_HOST}:${CODE_SERVER_PORT}`,
+    "--auth",
+    "password",
+    "--base-path",
+    CODE_SERVER_BASE_PATH,
+    "--disable-update-check",
+    "--disable-telemetry",
+    "--user-data-dir",
+    CODE_SERVER_DATA_DIR,
+    "--extensions-dir",
+    CODE_SERVER_EXTENSIONS_DIR,
+    CODE_SERVER_WORKDIR,
+  ];
+
+  codeServerProc = childProcess.spawn(CODE_SERVER_BIN, args, {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      HOME: os.homedir(),
+      PASSWORD: CODE_SERVER_PASSWORD,
+    },
+  });
+
+  log.info("code-server", `starting with command: ${CODE_SERVER_BIN} ${args.join(" ")}`);
+  log.info("code-server", `workdir: ${CODE_SERVER_WORKDIR}`);
+
+  codeServerProc.on("error", (err) => {
+    log.error("code-server", `spawn error: ${String(err)}`);
+    codeServerProc = null;
+  });
+
+  codeServerProc.on("exit", (code, signal) => {
+    log.error("code-server", `exited code=${code} signal=${signal}`);
+    codeServerProc = null;
+  });
+}
+
+async function ensureCodeServerRunning() {
+  if (!ENABLE_CODE_SERVER) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (codeServerProc) {
+    return { ok: true };
+  }
+  if (!codeServerStarting) {
+    codeServerStarting = (async () => {
+      await startCodeServer();
+      const ready = await waitForCodeServerReady({ timeoutMs: 30_000 });
+      if (!ready) {
+        throw new Error("code-server did not become ready in time");
+      }
+    })().finally(() => {
+      codeServerStarting = null;
+    });
+  }
+  await codeServerStarting;
+  return { ok: true };
 }
 
 const setupRateLimiter = {
@@ -522,6 +638,8 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     channelsAddHelp: channelsHelp,
     authGroups,
     tuiEnabled: ENABLE_WEB_TUI,
+    codeServerEnabled: ENABLE_CODE_SERVER,
+    codeServerBasePath: CODE_SERVER_BASE_PATH,
   });
 });
 
@@ -975,6 +1093,24 @@ app.get("/tui", requireSetupAuth, (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "tui.html"));
 });
 
+app.use(CODE_SERVER_BASE_PATH, requireSetupAuth, async (req, res) => {
+  if (!ENABLE_CODE_SERVER) {
+    return res
+      .status(403)
+      .type("text/plain")
+      .send("VSCode service is disabled. Set ENABLE_CODE_SERVER=true to enable it.");
+  }
+
+  try {
+    await ensureCodeServerRunning();
+  } catch (err) {
+    log.error("code-server", `startup failed: ${err.message}`);
+    return res.status(503).type("text/plain").send("VSCode service is starting. Please retry.");
+  }
+
+  return codeProxy.web(req, res, { target: CODE_SERVER_TARGET });
+});
+
 let activeTuiSession = null;
 
 function verifyTuiAuth(req) {
@@ -1113,6 +1249,15 @@ const proxy = httpProxy.createProxyServer({
   timeout: 120_000,
 });
 
+const codeProxy = httpProxy.createProxyServer({
+  target: CODE_SERVER_TARGET,
+  ws: true,
+  xfwd: true,
+  changeOrigin: true,
+  proxyTimeout: 120_000,
+  timeout: 120_000,
+});
+
 proxy.on("error", (err, _req, res) => {
   log.error("proxy", String(err));
   if (res && typeof res.headersSent !== "undefined" && !res.headersSent) {
@@ -1143,6 +1288,15 @@ proxy.on("proxyReq", (proxyReq, req, res) => {
 proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", PROXY_ORIGIN);
+});
+
+codeProxy.on("error", (err, _req, res) => {
+  log.error("code-server-proxy", String(err));
+  if (res && typeof res.headersSent !== "undefined" && !res.headersSent) {
+    res.statusCode = 503;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("VSCode service unavailable. Retrying...");
+  }
 });
 
 app.use(async (req, res) => {
@@ -1179,7 +1333,17 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `listening on port ${PORT}`);
   log.info("wrapper", `setup wizard: http://localhost:${PORT}/setup`);
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
+  log.info("wrapper", `vscode web: ${ENABLE_CODE_SERVER ? "enabled" : "disabled"}`);
+  if (ENABLE_CODE_SERVER) {
+    log.info("wrapper", "vscode auth: setup basic auth + code-server password");
+  }
   log.info("wrapper", `configured: ${isConfigured()}`);
+
+  if (ENABLE_CODE_SERVER) {
+    ensureCodeServerRunning().catch((err) => {
+      log.error("code-server", `failed to start at boot: ${err.message}`);
+    });
+  }
 
   if (isConfigured()) {
     (async () => {
@@ -1228,6 +1392,30 @@ server.on("upgrade", async (req, socket, head) => {
     return;
   }
 
+  if (
+    ENABLE_CODE_SERVER &&
+    (url.pathname === CODE_SERVER_BASE_PATH ||
+      url.pathname.startsWith(`${CODE_SERVER_BASE_PATH}/`))
+  ) {
+    if (!verifyTuiAuth(req)) {
+      socket.write(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"OpenClaw Setup\"\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
+
+    try {
+      await ensureCodeServerRunning();
+    } catch (err) {
+      log.warn("code-server", `websocket startup failed: ${err.message}`);
+      socket.destroy();
+      return;
+    }
+    codeProxy.ws(req, socket, head, { target: CODE_SERVER_TARGET });
+    return;
+  }
+
   if (!isConfigured()) {
     socket.destroy();
     return;
@@ -1272,6 +1460,21 @@ async function gracefulShutdown(signal) {
       }
     } catch (err) {
       log.warn("wrapper", `error killing gateway: ${err.message}`);
+    }
+  }
+
+  if (codeServerProc) {
+    try {
+      codeServerProc.kill("SIGTERM");
+      await Promise.race([
+        new Promise((resolve) => codeServerProc.on("exit", resolve)),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+      if (codeServerProc && !codeServerProc.killed) {
+        codeServerProc.kill("SIGKILL");
+      }
+    } catch (err) {
+      log.warn("wrapper", `error killing code-server: ${err.message}`);
     }
   }
 

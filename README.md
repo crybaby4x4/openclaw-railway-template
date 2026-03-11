@@ -21,6 +21,7 @@
 - **OpenClaw Gateway + Control UI** (served at `/` and `/openclaw`)
 - A friendly **Setup Wizard** at `/setup` (protected by a password)
 - Optional **Web Terminal** at `/tui` for browser-based TUI access
+- Optional **Web VSCode** at `/vscode` for browser-based directory editing
 - Persistent state via **Railway Volume** (so config/credentials/memory survive redeploys)
 
 ## How it works (high level)
@@ -77,6 +78,30 @@ The web TUI implements multiple security layers:
 | `TUI_IDLE_TIMEOUT_MS` | `300000` (5 min) | Closes session after inactivity |
 | `TUI_MAX_SESSION_MS` | `1800000` (30 min) | Maximum session duration |
 
+## Web VSCode (code-server)
+
+The template can expose a browser-based VSCode service via `code-server`.
+
+### Enabling
+
+Set `ENABLE_CODE_SERVER=true` in Railway Variables.
+
+Once enabled, access it at `/vscode`. Access is protected by the same Basic Auth password used by `/setup` (`SETUP_PASSWORD`).
+In addition, VSCode itself requires a second login password (`CODE_SERVER_PASSWORD`, falls back to `SETUP_PASSWORD` if unset).
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_CODE_SERVER` | `false` | Set to `true` to enable |
+| `CODE_SERVER_PORT` | `13337` | Internal code-server port |
+| `CODE_SERVER_HOST` | `127.0.0.1` | Internal bind host |
+| `CODE_SERVER_BASE_PATH` | `/vscode` | Public path prefix |
+| `CODE_SERVER_PASSWORD` | `${SETUP_PASSWORD}` | code-server login password (second auth layer) |
+| `CODE_SERVER_WORKDIR` | `${OPENCLAW_WORKSPACE_DIR}` | Directory opened in editor |
+| `CODE_SERVER_DATA_DIR` | `${OPENCLAW_STATE_DIR}/code-server` | VSCode user data directory |
+| `CODE_SERVER_EXTENSIONS_DIR` | `${CODE_SERVER_DATA_DIR}/extensions` | VSCode extensions directory |
+
 ## Local testing
 
 ```bash
@@ -86,6 +111,7 @@ docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e SETUP_PASSWORD=test \
   -e ENABLE_WEB_TUI=true \
+  -e ENABLE_CODE_SERVER=true \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
   -v $(pwd)/.tmpdata:/data \
@@ -93,6 +119,7 @@ docker run --rm -p 8080:8080 \
 
 # Setup wizard: http://localhost:8080/setup (password: test)
 # Web terminal: http://localhost:8080/tui (after setup)
+# Web VSCode: http://localhost:8080/vscode
 ```
 
 ## FAQ

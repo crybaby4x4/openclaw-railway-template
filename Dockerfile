@@ -14,6 +14,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g openclaw@2026.3.8
+RUN npm install -g code-server@latest
 
 WORKDIR /app
 
