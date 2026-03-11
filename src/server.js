@@ -382,7 +382,7 @@ async function startCodeServer() {
   ];
 
   codeServerProc = childProcess.spawn(CODE_SERVER_BIN, args, {
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       HOME: os.homedir(),
@@ -396,6 +396,22 @@ async function startCodeServer() {
   codeServerProc.on("error", (err) => {
     log.error("code-server", `spawn error: ${String(err)}`);
     codeServerProc = null;
+  });
+
+  codeServerProc.stdout?.on("data", (chunk) => {
+    const text = chunk.toString("utf8");
+    for (const line of text.split("\n")) {
+      const msg = line.trim();
+      if (msg) log.info("code-server", msg);
+    }
+  });
+
+  codeServerProc.stderr?.on("data", (chunk) => {
+    const text = chunk.toString("utf8");
+    for (const line of text.split("\n")) {
+      const msg = line.trim();
+      if (msg) log.error("code-server", msg);
+    }
   });
 
   codeServerProc.on("exit", (code, signal) => {
