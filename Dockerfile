@@ -34,6 +34,7 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod
 
 COPY src ./src
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
+COPY --chmod=755 scripts/openclaw-gateway-restart /usr/local/bin/openclaw-gateway-restart
 
 RUN useradd -m -s /bin/bash openclaw \
   && usermod -aG sudo openclaw \
