@@ -13,7 +13,7 @@ RUN apt-get update \
     zip \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g openclaw@2026.3.11
+RUN npm install -g openclaw@2026.3.12
 RUN set -eux; \
   OPENVSCODE_TAG="$(curl -fsSL https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' | head -n1)"; \
   ARCH="$(dpkg --print-architecture)"; \
