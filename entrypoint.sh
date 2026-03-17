@@ -6,7 +6,8 @@ ZSHRC_PATH="${PERSISTENT_HOME}/.zshrc"
 
 mkdir -p /data
 mkdir -p /data/home
-mkdir -p /data/pkg/npm-global
+mkdir -p /data/pkg/npm-global/lib
+mkdir -p /data/pkg/npm-global/bin
 mkdir -p /data/pkg/npm-cache
 mkdir -p /data/pkg/pnpm
 mkdir -p /data/pkg/pnpm-store
@@ -26,7 +27,8 @@ if [ ! -f "${PERSISTENT_HOME}/.bootstrap-complete" ]; then
 fi
 
 if [ ! -f "${ZSHRC_PATH}" ]; then
-  printf '%s\n' 'export PATH="/data/pkg/npm-global/bin:/data/pkg/pnpm:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"' > "${ZSHRC_PATH}"
+  printf '%s\n' '# --- persistent env ---' > "${ZSHRC_PATH}"
+  printf '%s\n' 'export PATH="/data/pkg/npm-global/bin:/data/pkg/pnpm:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"' >> "${ZSHRC_PATH}"
   printf '%s\n' 'export SHELL="/bin/zsh"' >> "${ZSHRC_PATH}"
   printf '%s\n' 'export ZDOTDIR="${HOME}"' >> "${ZSHRC_PATH}"
   printf '%s\n' 'export XDG_CONFIG_HOME="${HOME}/.config"' >> "${ZSHRC_PATH}"
@@ -41,6 +43,11 @@ if [ ! -f "${ZSHRC_PATH}" ]; then
   printf '%s\n' 'export PYTHONUSERBASE="/data/pkg/python-user"' >> "${ZSHRC_PATH}"
   printf '%s\n' 'export PIP_CACHE_DIR="/data/pkg/pip-cache"' >> "${ZSHRC_PATH}"
   printf '%s\n' 'export HOMEBREW_CACHE="${HOME}/.cache/Homebrew"' >> "${ZSHRC_PATH}"
+  printf '%s\n' '# --- oh-my-zsh (baked into image at /opt/oh-my-zsh) ---' >> "${ZSHRC_PATH}"
+  printf '%s\n' 'export ZSH="/opt/oh-my-zsh"' >> "${ZSHRC_PATH}"
+  printf '%s\n' 'ZSH_THEME="robbyrussell"' >> "${ZSHRC_PATH}"
+  printf '%s\n' 'plugins=(git z sudo colored-man-pages command-not-found)' >> "${ZSHRC_PATH}"
+  printf '%s\n' '[ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"' >> "${ZSHRC_PATH}"
 fi
 
 chown -R openclaw:openclaw "${PERSISTENT_HOME}"

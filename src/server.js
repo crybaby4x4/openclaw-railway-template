@@ -449,7 +449,6 @@ async function startCodeServer() {
     "--server-base-path",
     CODE_SERVER_BASE_PATH,
     "--accept-server-license-terms",
-    "--disable-update-check",
     "--disable-telemetry",
     "--server-data-dir",
     CODE_SERVER_DATA_DIR,

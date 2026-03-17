@@ -62,7 +62,12 @@ RUN useradd -m -s /bin/zsh openclaw \
   && chmod 0440 /etc/sudoers.d/openclaw \
   && chown -R openclaw:openclaw /app \
   && mkdir -p /data && chown openclaw:openclaw /data \
-  && mkdir -p /home/linuxbrew/.linuxbrew && chown -R openclaw:openclaw /home/linuxbrew
+  && mkdir -p /home/linuxbrew/.linuxbrew && chown -R openclaw:openclaw /home/linuxbrew \
+  && chown -R openclaw:openclaw /usr/local/lib/node_modules/openclaw \
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/clawhub 2>/dev/null; true)
+
+RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
+  && chmod -R 755 /opt/oh-my-zsh
 
 USER openclaw
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -82,6 +87,8 @@ ENV PNPM_STORE_DIR=/data/pkg/pnpm-store
 ENV PYTHONUSERBASE=/data/pkg/python-user
 ENV PIP_CACHE_DIR=/data/pkg/pip-cache
 ENV HOMEBREW_CACHE=/home/openclaw/.cache/Homebrew
+ENV ZSH=/opt/oh-my-zsh
+ENV ZSH_THEME=robbyrussell
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 ENV PATH="/data/pkg/npm-global/bin:/data/pkg/pnpm:${PATH}"
 ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
