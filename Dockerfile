@@ -8,12 +8,32 @@ RUN apt-get update \
     gosu \
     procps \
     python3 \
+    python3-pip \
     sudo \
     build-essential \
+    zsh \
     zip \
+    unzip \
+    wget \
+    ripgrep \
+    fd-find \
+    jq \
+    openssh-client \
+    sqlite3 \
+    htop \
+    lsof \
+    net-tools \
+    dnsutils \
+    vim \
+    nano \
+    less \
+    file \
+    tree \
+    tmux \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g openclaw@2026.3.13
+RUN npm install -g openclaw@2026.3.13 clawhub@latest
 RUN set -eux; \
   OPENVSCODE_TAG="$(curl -fsSL https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' | head -n1)"; \
   ARCH="$(dpkg --print-architecture)"; \
@@ -36,7 +56,7 @@ COPY src ./src
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
 COPY --chmod=755 scripts/openclaw-gateway-restart /usr/local/bin/openclaw-gateway-restart
 
-RUN useradd -m -s /bin/bash openclaw \
+RUN useradd -m -s /bin/zsh openclaw \
   && usermod -aG sudo openclaw \
   && echo "openclaw ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/openclaw \
   && chmod 0440 /etc/sudoers.d/openclaw \
@@ -47,7 +67,23 @@ RUN useradd -m -s /bin/bash openclaw \
 USER openclaw
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
+ENV HOME=/home/openclaw
+ENV SHELL=/bin/zsh
+ENV ZDOTDIR=/home/openclaw
+ENV XDG_CONFIG_HOME=/home/openclaw/.config
+ENV XDG_CACHE_HOME=/home/openclaw/.cache
+ENV XDG_DATA_HOME=/home/openclaw/.local/share
+ENV XDG_STATE_HOME=/home/openclaw/.local/state
+ENV NPM_CONFIG_PREFIX=/data/pkg/npm-global
+ENV NPM_CONFIG_CACHE=/data/pkg/npm-cache
+ENV NPM_CONFIG_USERCONFIG=/home/openclaw/.npmrc
+ENV PNPM_HOME=/data/pkg/pnpm
+ENV PNPM_STORE_DIR=/data/pkg/pnpm-store
+ENV PYTHONUSERBASE=/data/pkg/python-user
+ENV PIP_CACHE_DIR=/data/pkg/pip-cache
+ENV HOMEBREW_CACHE=/home/openclaw/.cache/Homebrew
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+ENV PATH="/data/pkg/npm-global/bin:/data/pkg/pnpm:${PATH}"
 ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
 ENV HOMEBREW_CELLAR="/home/linuxbrew/.linuxbrew/Cellar"
 ENV HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"

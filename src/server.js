@@ -10,6 +10,32 @@ import pty from "node-pty";
 import { WebSocketServer } from "ws";
 
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
+const USER_HOME = process.env.HOME?.trim() || os.homedir();
+const USER_SHELL = process.env.SHELL?.trim() || "/bin/zsh";
+const USER_ZDOTDIR = process.env.ZDOTDIR?.trim() || USER_HOME;
+const XDG_CONFIG_HOME =
+  process.env.XDG_CONFIG_HOME?.trim() || path.join(USER_HOME, ".config");
+const XDG_CACHE_HOME =
+  process.env.XDG_CACHE_HOME?.trim() || path.join(USER_HOME, ".cache");
+const XDG_DATA_HOME =
+  process.env.XDG_DATA_HOME?.trim() || path.join(USER_HOME, ".local", "share");
+const XDG_STATE_HOME =
+  process.env.XDG_STATE_HOME?.trim() || path.join(USER_HOME, ".local", "state");
+const NPM_CONFIG_PREFIX =
+  process.env.NPM_CONFIG_PREFIX?.trim() || "/data/pkg/npm-global";
+const NPM_CONFIG_CACHE =
+  process.env.NPM_CONFIG_CACHE?.trim() || "/data/pkg/npm-cache";
+const NPM_CONFIG_USERCONFIG =
+  process.env.NPM_CONFIG_USERCONFIG?.trim() || path.join(USER_HOME, ".npmrc");
+const PNPM_HOME = process.env.PNPM_HOME?.trim() || "/data/pkg/pnpm";
+const PNPM_STORE_DIR =
+  process.env.PNPM_STORE_DIR?.trim() || "/data/pkg/pnpm-store";
+const PYTHONUSERBASE =
+  process.env.PYTHONUSERBASE?.trim() || "/data/pkg/python-user";
+const PIP_CACHE_DIR =
+  process.env.PIP_CACHE_DIR?.trim() || "/data/pkg/pip-cache";
+const HOMEBREW_CACHE =
+  process.env.HOMEBREW_CACHE?.trim() || path.join(XDG_CACHE_HOME, "Homebrew");
 const STATE_DIR =
   process.env.OPENCLAW_STATE_DIR?.trim() ||
   path.join(os.homedir(), ".openclaw");
@@ -145,6 +171,30 @@ const CODE_SERVER_EXTENSIONS_DIR =
   process.env.CODE_SERVER_EXTENSIONS_DIR?.trim() ||
   path.join(CODE_SERVER_DATA_DIR, "extensions");
 
+function buildRuntimeEnv(overrides = {}) {
+  return {
+    ...process.env,
+    HOME: USER_HOME,
+    SHELL: USER_SHELL,
+    ZDOTDIR: USER_ZDOTDIR,
+    XDG_CONFIG_HOME,
+    XDG_CACHE_HOME,
+    XDG_DATA_HOME,
+    XDG_STATE_HOME,
+    NPM_CONFIG_PREFIX,
+    NPM_CONFIG_CACHE,
+    NPM_CONFIG_USERCONFIG,
+    PNPM_HOME,
+    PNPM_STORE_DIR,
+    PYTHONUSERBASE,
+    PIP_CACHE_DIR,
+    HOMEBREW_CACHE,
+    OPENCLAW_STATE_DIR: STATE_DIR,
+    OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
+    ...overrides,
+  };
+}
+
 function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
 }
@@ -250,11 +300,7 @@ async function startGateway() {
 
   gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
     stdio: "inherit",
-    env: {
-      ...process.env,
-      OPENCLAW_STATE_DIR: STATE_DIR,
-      OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
-    },
+    env: buildRuntimeEnv(),
   });
 
   const safeArgs = args.map((arg, i) =>
@@ -366,6 +412,35 @@ async function startCodeServer() {
   fs.mkdirSync(CODE_SERVER_EXTENSIONS_DIR, { recursive: true });
   fs.mkdirSync(CODE_SERVER_WORKDIR, { recursive: true });
 
+  const vscodeUserDir = path.join(CODE_SERVER_DATA_DIR, "User");
+  fs.mkdirSync(vscodeUserDir, { recursive: true });
+  const vscodeSettingsPath = path.join(vscodeUserDir, "settings.json");
+  const terminalSettings = {
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.profiles.linux": {
+      "zsh": { "path": "/bin/zsh", "args": ["-l"] },
+      "bash": { "path": "/bin/bash" },
+    },
+  };
+  try {
+    let existing = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(vscodeSettingsPath, "utf8"));
+    } catch {}
+    if (!existing["terminal.integrated.defaultProfile.linux"]) {
+      const merged = { ...terminalSettings, ...existing };
+      merged["terminal.integrated.defaultProfile.linux"] = "zsh";
+      merged["terminal.integrated.profiles.linux"] = {
+        ...terminalSettings["terminal.integrated.profiles.linux"],
+        ...(existing["terminal.integrated.profiles.linux"] ?? {}),
+      };
+      fs.writeFileSync(vscodeSettingsPath, JSON.stringify(merged, null, 2), "utf8");
+      log.info("code-server", "wrote terminal profile settings (zsh default)");
+    }
+  } catch (err) {
+    log.warn("code-server", `could not write settings.json: ${err.message}`);
+  }
+
   const args = [
     "--host",
     CODE_SERVER_HOST,
@@ -388,13 +463,11 @@ async function startCodeServer() {
 
   codeServerProc = childProcess.spawn(CODE_SERVER_BIN, args, {
     stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
+    env: buildRuntimeEnv({
       // Railway injects PORT=8080; some code-server builds may honor it.
       // Remove it so web IDE binds strictly to explicit host/port.
       PORT: undefined,
-      HOME: os.homedir(),
-    },
+    }),
   });
 
   log.info("code-server", `starting with command: ${CODE_SERVER_BIN} ${args.join(" ")}`);
@@ -776,11 +849,7 @@ function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const proc = childProcess.spawn(cmd, args, {
       ...opts,
-      env: {
-        ...process.env,
-        OPENCLAW_STATE_DIR: STATE_DIR,
-        OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
-      },
+      env: buildRuntimeEnv(opts.env),
     });
 
     let out = "";
@@ -1289,12 +1358,9 @@ function createTuiWebSocketServer(httpServer) {
         cols,
         rows,
         cwd: WORKSPACE_DIR,
-        env: {
-          ...process.env,
-          OPENCLAW_STATE_DIR: STATE_DIR,
-          OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
+        env: buildRuntimeEnv({
           TERM: "xterm-256color",
-        },
+        }),
       });
 
       if (activeTuiSession) {
