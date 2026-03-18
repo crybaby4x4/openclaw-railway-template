@@ -71,6 +71,15 @@ chown -R openclaw:openclaw "${PERSISTENT_HOME}"
 rm -rf /home/openclaw
 ln -sfn "${PERSISTENT_HOME}" /home/openclaw
 
+# Sync container-ops skill into workspace so all agents (cursor-agent, claude, codex, gemini) pick it up
+WORKSPACE_SKILL_DIR="/data/workspace/skills/container-ops"
+mkdir -p "${WORKSPACE_SKILL_DIR}"
+ln -sfn /opt/skills/container-ops/SKILL.md "${WORKSPACE_SKILL_DIR}/SKILL.md"
+cp /opt/skills/workspace/BOOTSTRAP.md /data/workspace/BOOTSTRAP.md
+chown openclaw:openclaw /data/workspace/BOOTSTRAP.md 2>/dev/null || true
+
+chown -R openclaw:openclaw /data/workspace/.cursor 2>/dev/null || true
+
 if [ ! -d /data/.linuxbrew ]; then
   cp -a /home/linuxbrew/.linuxbrew /data/.linuxbrew
 fi

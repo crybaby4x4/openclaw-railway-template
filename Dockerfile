@@ -30,10 +30,22 @@ RUN apt-get update \
     file \
     tree \
     tmux \
+    xvfb \
+    chromium \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g openclaw@2026.3.13 clawhub@latest
+RUN npm install -g \
+    openclaw@2026.3.13 \
+    clawhub@latest \
+    @anthropic-ai/claude-code \
+    @openai/codex \
+    @google/gemini-cli
+
+RUN curl -fsSL https://cursor.com/install | bash
 RUN set -eux; \
   OPENVSCODE_TAG="$(curl -fsSL https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest | sed -n 's/.*"tag_name": "\(.*\)".*/\1/p' | head -n1)"; \
   ARCH="$(dpkg --print-architecture)"; \
@@ -55,6 +67,8 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod
 COPY src ./src
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
 COPY --chmod=755 scripts/openclaw-gateway-restart /usr/local/bin/openclaw-gateway-restart
+COPY .cursor/skills/container-ops/SKILL.md /opt/skills/container-ops/SKILL.md
+COPY .cursor/skills/workspace-templates/BOOTSTRAP.md /opt/skills/workspace/BOOTSTRAP.md
 
 RUN useradd -m -s /bin/zsh openclaw \
   && usermod -aG sudo openclaw \
@@ -64,7 +78,10 @@ RUN useradd -m -s /bin/zsh openclaw \
   && mkdir -p /data && chown openclaw:openclaw /data \
   && mkdir -p /home/linuxbrew/.linuxbrew && chown -R openclaw:openclaw /home/linuxbrew \
   && chown -R openclaw:openclaw /usr/local/lib/node_modules/openclaw \
-  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/clawhub 2>/dev/null; true)
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/clawhub 2>/dev/null; true) \
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null; true) \
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@openai 2>/dev/null; true) \
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@google 2>/dev/null; true)
 
 RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
   && chmod -R 755 /opt/oh-my-zsh
