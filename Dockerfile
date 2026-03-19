@@ -79,10 +79,12 @@ RUN useradd -m -s /bin/zsh openclaw \
   && mkdir -p /data && chown openclaw:openclaw /data \
   && mkdir -p /home/linuxbrew/.linuxbrew && chown -R openclaw:openclaw /home/linuxbrew \
   && chown -R openclaw:openclaw /usr/local/lib/node_modules/openclaw \
+  && chown -R openclaw:openclaw /opt/skills \
   && (chown -R openclaw:openclaw /usr/local/lib/node_modules/clawhub 2>/dev/null; true) \
   && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null; true) \
   && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@openai 2>/dev/null; true) \
-  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@google 2>/dev/null; true)
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@google 2>/dev/null; true) \
+  && (chown -R openclaw:openclaw /usr/local/lib/node_modules/@pierre 2>/dev/null; true)
 
 RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
   && chmod -R 755 /opt/oh-my-zsh

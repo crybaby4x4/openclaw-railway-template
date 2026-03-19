@@ -71,10 +71,21 @@ chown -R openclaw:openclaw "${PERSISTENT_HOME}"
 rm -rf /home/openclaw
 ln -sfn "${PERSISTENT_HOME}" /home/openclaw
 
-mkdir -p "/data/workspace/skills"
-cp /opt/skills/workspace/BOOTSTRAP.md /data/workspace/BOOTSTRAP.md
-chown openclaw:openclaw /data/workspace/BOOTSTRAP.md 2>/dev/null || true
+mkdir -p "/data/workspace/skills/container-ops"
 
+# Sync image-layer skill files into workspace on every start.
+# Use cat redirection instead of cp to avoid "same file" errors from leftover symlinks.
+if [ -f /opt/skills/container-ops/SKILL.md ]; then
+  rm -f /data/workspace/skills/container-ops/SKILL.md
+  cat /opt/skills/container-ops/SKILL.md > /data/workspace/skills/container-ops/SKILL.md
+fi
+if [ -f /opt/skills/workspace/BOOTSTRAP.md ]; then
+  rm -f /data/workspace/BOOTSTRAP.md
+  cat /opt/skills/workspace/BOOTSTRAP.md > /data/workspace/BOOTSTRAP.md
+fi
+
+chown openclaw:openclaw /data/workspace/BOOTSTRAP.md 2>/dev/null || true
+chown -R openclaw:openclaw /data/workspace/skills 2>/dev/null || true
 chown -R openclaw:openclaw /data/workspace/.cursor 2>/dev/null || true
 
 if [ ! -d /data/.linuxbrew ]; then
