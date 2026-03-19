@@ -43,7 +43,8 @@ RUN npm install -g \
     clawhub@latest \
     @anthropic-ai/claude-code \
     @openai/codex \
-    @google/gemini-cli
+    @google/gemini-cli \
+    @pierre/diffs
 
 RUN curl -fsSL https://cursor.com/install | bash
 RUN set -eux; \
