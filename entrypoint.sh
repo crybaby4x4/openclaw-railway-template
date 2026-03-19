@@ -74,7 +74,8 @@ ln -sfn "${PERSISTENT_HOME}" /home/openclaw
 # Sync container-ops skill into workspace so all agents (cursor-agent, claude, codex, gemini) pick it up
 WORKSPACE_SKILL_DIR="/data/workspace/skills/container-ops"
 mkdir -p "${WORKSPACE_SKILL_DIR}"
-ln -sfn /opt/skills/container-ops/SKILL.md "${WORKSPACE_SKILL_DIR}/SKILL.md"
+cp /opt/skills/container-ops/SKILL.md "${WORKSPACE_SKILL_DIR}/SKILL.md"
+chown openclaw:openclaw "${WORKSPACE_SKILL_DIR}/SKILL.md" 2>/dev/null || true
 cp /opt/skills/workspace/BOOTSTRAP.md /data/workspace/BOOTSTRAP.md
 chown openclaw:openclaw /data/workspace/BOOTSTRAP.md 2>/dev/null || true
 
