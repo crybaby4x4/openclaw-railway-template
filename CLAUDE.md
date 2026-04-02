@@ -9,6 +9,8 @@ This is a Railway deployment wrapper for **OpenClaw** (an AI coding assistant pl
 - A web-based setup wizard at `/setup` (protected by `SETUP_PASSWORD`)
 - Automatic reverse proxy from public URL → internal OpenClaw gateway
 - Persistent state via Railway Volume at `/data`
+- Optional web-based TUI terminal access
+- Structured logging with SSE streaming and file rotation
 
 The wrapper manages the OpenClaw lifecycle: onboarding → gateway startup → traffic proxying.
 
@@ -16,14 +18,16 @@ The wrapper manages the OpenClaw lifecycle: onboarding → gateway startup → t
 
 ```bash
 # Local development (requires OpenClaw installed globally or OPENCLAW_ENTRY set)
-npm run dev
+npm run dev        # same as npm start
 
 # Production start
 npm start
 
-# Syntax check
+# Syntax check (no linter configured)
 npm run lint
 ```
+
+**Package manager**: pnpm (with workspace config). Uses `corepack enable` in Docker.
 
 ## Docker Build & Local Testing
 
@@ -48,13 +52,15 @@ open http://localhost:8080/setup  # password: test
 
 ### Request Flow
 
-1. **User → Railway → Wrapper (Express on PORT)** → routes to:
+1. **User → Railway → Wrapper (Express 5 on PORT)** → routes to:
    - `/setup/*` → setup wizard (auth: Basic with `SETUP_PASSWORD`)
+   - `/tui` → web terminal (auth: Basic, requires `ENABLE_WEB_TUI=true`)
+   - `/logs` → log viewer (auth: Basic)
    - All other routes → proxied to internal gateway
 
 2. **Wrapper → Gateway** (localhost:18789 by default)
    - HTTP/WebSocket reverse proxy via `http-proxy`
-   - Automatically injects `Authorization: Bearer <token>` header
+   - Automatically injects `Authorization: Bearer <token>` header (except `/hooks/*` paths)
 
 ### Lifecycle States
 
@@ -63,52 +69,103 @@ open http://localhost:8080/setup  # password: test
    - User completes setup wizard → runs `openclaw onboard --non-interactive`
 
 2. **Configured**: `openclaw.json` exists
-   - Wrapper spawns `openclaw gateway run` as child process
-   - Waits for gateway to respond on multiple health endpoints
+   - On boot: runs `openclaw doctor --fix`, then spawns `openclaw gateway run`
+   - Waits for gateway readiness (polls endpoints every 250ms, 60s timeout)
    - Proxies all traffic with injected bearer token
+   - Auto-restarts gateway on crash (2s delay)
 
 ### Key Files
 
-- **src/server.js** (main entry): Express wrapper, proxy setup, gateway lifecycle management, configuration persistence (server logic only - no inline HTML/CSS)
-- **src/public/** (static assets for setup wizard):
-  - **setup.html**: Setup wizard HTML structure
-  - **styles.css**: Setup wizard styling (extracted from inline styles)
-  - **setup-app.js**: Client-side JS for `/setup` wizard (vanilla JS, no build step)
-- **Dockerfile**: Single-stage build (installs OpenClaw via npm, installs wrapper deps)
+- **src/server.js** (main entry): Express wrapper, proxy setup, gateway lifecycle, setup API, web TUI, logging
+- **src/openclaw-shim.sh**: CLI shim that intercepts `openclaw gateway restart/stop` and redirects to wrapper API (see Gateway CLI Shim section)
+- **src/public/** (static assets):
+  - **setup.html**: Setup wizard UI (Alpine.js, multi-step onboarding)
+  - **styles.css**: Shared CSS (light/dark mode via CSS variables, Space Grotesk font)
+  - **tui.html**: Web terminal UI (xterm.js-based)
+  - **loading.html**: Loading/error fallback page (shown when gateway unavailable)
+  - **logs.html**: Real-time log viewer (SSE-based)
+- **Dockerfile**: Multi-stage build (builder compiles node-pty, runtime uses bookworm-slim + Chromium + Linuxbrew)
+- **entrypoint.sh**: Persists Linuxbrew to volume, starts persistent Chromium CDP instance, runs server as `openclaw` user via `gosu`
+- **railway.toml**: Railway deployment config (Dockerfile builder, health check at `/setup/healthz`)
 
 ### Environment Variables
 
 **Required:**
-- `SETUP_PASSWORD` — protects `/setup` wizard
+- `SETUP_PASSWORD` — protects `/setup` wizard and web TUI
 
 **Recommended (Railway template defaults):**
 - `OPENCLAW_STATE_DIR=/data/.openclaw` — config + credentials
 - `OPENCLAW_WORKSPACE_DIR=/data/workspace` — agent workspace
 
 **Optional:**
-- `OPENCLAW_GATEWAY_TOKEN` — auth token for gateway (auto-generated if unset)
+- `OPENCLAW_GATEWAY_TOKEN` — auth token for gateway (auto-generated and persisted if unset)
 - `PORT` — wrapper HTTP port (default 8080)
 - `INTERNAL_GATEWAY_PORT` — gateway internal port (default 18789)
-- `OPENCLAW_ENTRY` — path to `entry.js` (default `/usr/local/lib/node_modules/openclaw/dist/entry.js`)
+- `INTERNAL_GATEWAY_HOST` — gateway bind host (default 127.0.0.1)
+- `OPENCLAW_ENTRY` — path to `entry.js` (default `/openclaw/dist/entry.js`)
+- `OPENCLAW_NODE` — node executable (default `node`)
+- `OPENCLAW_CONFIG_PATH` — override config file path (default `${STATE_DIR}/openclaw.json`)
+- `CHROMIUM_CDP_PORT` — persistent Chromium CDP port (default 9223)
+- `CHROMIUM_ENABLED` — start local Chromium instance (default `true`)
+- `REMOTE_CDP_URL` — remote browser CDP URL; when set, becomes default browser profile
+- `ENABLE_WEB_TUI` — enable web terminal at `/tui` (default `false`)
+- `TUI_IDLE_TIMEOUT_MS` — TUI idle timeout (default 300000 = 5 min)
+- `TUI_MAX_SESSION_MS` — TUI max session duration (default 1800000 = 30 min)
+- `RAILWAY_PUBLIC_DOMAIN` — auto-set by Railway, used for allowed origins sync
 
 ### Authentication Flow
 
 The wrapper manages a **two-layer auth scheme**:
 
-1. **Setup wizard auth**: Basic auth with `SETUP_PASSWORD` (src/server.js:190)
+1. **Setup wizard auth**: Basic auth with `SETUP_PASSWORD`, timing-safe comparison via `crypto.timingSafeEqual` (src/server.js:338-370)
 2. **Gateway auth**: Bearer token (auto-generated or from `OPENCLAW_GATEWAY_TOKEN` env)
-   - Token is auto-injected into proxied requests (src/server.js:736, src/server.js:741)
-   - Persisted to `${STATE_DIR}/gateway.token` if not provided via env (src/server.js:25-48)
+   - Token is auto-injected into proxied HTTP requests (src/server.js:1136-1141)
+   - Token is auto-injected into proxied WebSocket upgrades (src/server.js:1143-1146)
+   - Persisted to `${STATE_DIR}/gateway.token` if not provided via env (src/server.js:71-91)
+   - **Exception**: Requests to `/hooks/*` paths skip token injection (src/server.js:1137)
+
+3. **Rate limiting**: 50 requests per 60s per IP on setup endpoints (src/server.js:313-336)
+
+### Gateway CLI Shim
+
+**Problem**: OpenClaw's AI agents read official docs and try `openclaw gateway restart`, which fails because the wrapper manages the gateway process (not OpenClaw's PID-based mechanism).
+
+**Solution**: A shim script (`src/openclaw-shim.sh`) is installed at `/usr/local/bin/openclaw` and intercepts:
+- `openclaw gateway restart` → calls wrapper API `POST /setup/api/gateway/restart`
+- `openclaw gateway stop` → calls wrapper API `POST /setup/api/gateway/stop`
+- `openclaw gateway status` → calls wrapper API `GET /setup/healthz`
+- All other commands → pass through to real OpenClaw CLI at `$OPENCLAW_REAL_ENTRY`
+
+The shim uses `SETUP_PASSWORD` env var for Basic auth against the wrapper API. This is transparent to agents — they see `openclaw gateway restart` succeed as expected.
+
+### Sandbox & Browser Configuration
+
+**Railway limitation**: OpenClaw's sandbox and browser sandbox are Docker-based (require Docker-in-Docker). Railway doesn't provide Docker daemon access, so both are configured for direct execution:
+
+**Sandbox** (set during onboarding):
+- `agents.defaults.sandbox.mode` = `"off"` — disables Docker-based sandboxing
+- `tools.exec.host` = `"gateway"` — tools run directly on host (workaround for OpenClaw bug #4689)
+
+**Browser** (set during onboarding):
+- `browser.enabled` = `true`
+- `browser.attachOnly` = `true` — connects to existing Chromium instance instead of spawning new ones
+- `browser.defaultProfile` = `"local"` (or `"remote"` if `REMOTE_CDP_URL` is set)
+- `browser.profiles.local.cdpUrl` = `http://127.0.0.1:9223` — persistent Chromium started by entrypoint.sh
+- `browser.profiles.remote.cdpUrl` = `$REMOTE_CDP_URL` (optional, for external browser services with noVNC)
+
+**Chromium instance**: Started by `entrypoint.sh` with `--headless=new` (new headless mode, functionally equivalent to headed browser), persists profile to `/data/.chromium-profile`.
 
 ### Onboarding Process
 
-When the user runs setup (src/server.js:522-693):
+When the user runs setup (src/server.js):
 
-1. Calls `openclaw onboard --non-interactive` with user-selected auth provider
-2. Writes channel configs (Telegram/Discord/Slack) directly to `openclaw.json` via `openclaw config set --json`
-3. Force-sets gateway config to use token auth + loopback bind + allowInsecureAuth
-4. Spawns gateway process
-5. Waits for gateway readiness (polls multiple endpoints)
+1. Validates payload (auth choice, string fields)
+2. Calls `openclaw onboard --non-interactive` with user-selected auth provider
+3. **In parallel** sets: gateway config (`allowInsecureAuth`, auth token, trusted proxies), sandbox mode (`off`), exec host (`gateway`), browser config (`attachOnly` + CDP profiles)
+4. Optionally sets model via `openclaw models set`
+5. Writes channel configs (Telegram/Discord/Slack) directly via `openclaw config set --json`
+6. Restarts gateway process
+7. Waits for gateway readiness
 
 **Important**: Channel setup bypasses `openclaw channels add` and writes config directly because `channels add` is flaky across different OpenClaw builds.
 
@@ -116,82 +173,137 @@ When the user runs setup (src/server.js:522-693):
 
 The wrapper **always** injects the bearer token into proxied requests so browser clients don't need to know it:
 
-- HTTP requests: via `proxy.on("proxyReq")` event handler (src/server.js:736)
-- WebSocket upgrades: via `proxy.on("proxyReqWs")` event handler (src/server.js:741)
+- HTTP requests: via `proxy.on("proxyReq")` event handler (src/server.js:1136)
+- WebSocket upgrades: via `proxy.on("proxyReqWs")` event handler (src/server.js:1143)
+- Both also set `Origin` header to `RAILWAY_PUBLIC_DOMAIN` or gateway target (src/server.js:1132-1134)
 
 **Important**: Token injection uses `http-proxy` event handlers (`proxyReq` and `proxyReqWs`) rather than direct `req.headers` modification. Direct header modification does not reliably work with WebSocket upgrades, causing intermittent `token_missing` or `token_mismatch` errors.
 
-This allows the Control UI at `/openclaw` to work without user authentication.
+The Control UI at `/openclaw` auto-redirects to include the token as a query parameter (src/server.js:1171-1173).
+
+### Logging System
+
+Structured logging with three outputs (src/server.js:22-69):
+
+- **Console**: stdout/stderr with timestamps, levels, and categories
+- **Ring buffer**: Last 1000 lines in memory, served to SSE clients
+- **Log file**: `${STATE_DIR}/server.log`, auto-rotated at 5MB (halved)
+
+SSE streaming available at `/setup/api/logs/stream`. Log history at `/setup/api/logs`.
+
+### Web TUI
+
+Optional web-based terminal (disabled by default, set `ENABLE_WEB_TUI=true`):
+
+- Single concurrent session only (409 Conflict if session exists)
+- Spawns `openclaw tui` via `node-pty`
+- Idle timeout (default 5 min) and max session duration (default 30 min)
+- Basic auth required (same `SETUP_PASSWORD`)
+- WebSocket at `/tui/ws`, UI at `/tui`
+
+### Setup API Endpoints
+
+All under `/setup/api/*`, require Basic auth:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/setup/api/status` | GET | OpenClaw version, auth providers, TUI status |
+| `/setup/api/run` | POST | Execute onboarding |
+| `/setup/api/reset` | POST | Delete config file |
+| `/setup/api/doctor` | POST | Run `openclaw doctor --repair` |
+| `/setup/api/gateway/restart` | POST | Restart gateway via wrapper (used by CLI shim) |
+| `/setup/api/gateway/stop` | POST | Stop gateway via wrapper (used by CLI shim) |
+| `/setup/api/devices` | GET | List paired devices |
+| `/setup/api/devices/approve` | POST | Approve device pairing |
+| `/setup/api/devices/reject` | POST | Reject device pairing |
+| `/setup/api/pairing/approve` | POST | Approve channel pairing code |
+| `/setup/api/export` | GET | Download password-protected zip of state |
+| `/setup/api/logs` | GET | Get log history (query: `?lines=500`) |
+| `/setup/api/logs/stream` | GET | SSE log stream |
+| `/setup/api/debug` | GET | Debug info (versions, paths, config state) |
 
 ## Common Development Tasks
 
 ### Testing the setup wizard
 
-1. Delete `${STATE_DIR}/openclaw.json` (or run Reset in the UI)
+1. Delete `${STATE_DIR}/openclaw.json` (or use Reset in the UI)
 2. Visit `/setup` and complete onboarding
 3. Check logs for gateway startup and channel config writes
 
 ### Testing authentication
 
 - Setup wizard: Clear browser auth, verify Basic auth challenge
-- Gateway: Remove `Authorization` header injection (src/server.js:736) and verify requests fail
+- Gateway: Remove `Authorization` header injection (src/server.js:1138) and verify requests fail
+- Hooks: Verify `/hooks/*` paths work without token injection
 
 ### Debugging gateway startup
 
 Check logs for:
-- `[gateway] starting with command: ...` (src/server.js:142)
-- `[gateway] ready at <endpoint>` (src/server.js:100)
-- `[gateway] failed to become ready after 20000ms` (src/server.js:109)
+- `[gateway] starting with command: ...` (src/server.js:247)
+- `[gateway] ready at <endpoint>` (src/server.js:193)
+- `[gateway] failed to become ready after 60 seconds` (src/server.js:207)
+- `[gateway] exited code=... signal=...` (src/server.js:258) — triggers auto-restart
 
 If gateway doesn't start:
 - Verify `openclaw.json` exists and is valid JSON
 - Check `STATE_DIR` and `WORKSPACE_DIR` are writable
 - Ensure bearer token is set in config
+- Check `openclaw doctor --fix` output in boot logs
 
 ### Modifying onboarding args
 
-Edit `buildOnboardArgs()` (src/server.js:442-496) to add new CLI flags or auth providers.
+Edit `buildOnboardArgs()` (src/server.js:528-576) to add new CLI flags or auth providers. Update `VALID_AUTH_CHOICES` array (src/server.js:602-618) accordingly.
 
 ### Adding new channel types
 
 1. Add channel-specific fields to `/setup` HTML (src/public/setup.html)
-2. Add config-writing logic in `/setup/api/run` handler (src/server.js)
-3. Update client JS to collect the fields (src/public/setup-app.js)
+2. Add config-writing logic in the `configureChannel` calls within `/setup/api/run` handler (src/server.js:713-759)
+3. The setup.html uses Alpine.js for client-side state management
+
+### Adding new auth providers
+
+1. Add to `authGroups` array in `/setup/api/status` handler (src/server.js:421-516)
+2. Add CLI flag mapping in `buildOnboardArgs` (src/server.js:554-567)
+3. Add to `VALID_AUTH_CHOICES` array (src/server.js:602-618)
 
 ## Railway Deployment Notes
 
 - Template must mount a volume at `/data`
 - Must set `SETUP_PASSWORD` in Railway Variables
 - Public networking must be enabled (assigns `*.up.railway.app` domain)
-- OpenClaw is installed via `npm install -g openclaw@latest` during Docker build
+- OpenClaw is installed via `npm install -g openclaw@2026.3.8` during Docker build
+- Health check at `/setup/healthz` with 300s timeout
+- Linuxbrew is persisted to `/data/.linuxbrew` via entrypoint.sh symlink
+- Container runs as non-root `openclaw` user via `gosu`
+- **No Docker-in-Docker**: Railway doesn't provide Docker daemon access, so OpenClaw's Docker-based sandbox and browser sandbox are disabled; tools run directly on host, browser uses a local Chromium CDP instance
+- **Chromium**: Persistent headless Chromium instance started by entrypoint.sh, profile persisted to `/data/.chromium-profile`
 
-## Serena Semantic Coding
+## Tech Stack
 
-This project has been onboarded with **Serena** (semantic coding assistant via MCP). Comprehensive memory files are available covering:
-
-- Project overview and architecture
-- Tech stack and codebase structure
-- Code style and conventions
-- Development commands and task completion checklist
-- Quirks and gotchas
-
-**When working on tasks:**
-1. Check `mcp__serena__check_onboarding_performed` first to see available memories
-2. Read relevant memory files before diving into code (e.g., `mcp__serena__read_memory`)
-3. Use Serena's semantic tools for efficient code exploration:
-   - `get_symbols_overview` - Get high-level file structure without reading entire file
-   - `find_symbol` - Find classes, functions, methods by name path
-   - `find_referencing_symbols` - Understand dependencies and usage
-4. Prefer symbolic editing (`replace_symbol_body`, `insert_after_symbol`) for precise modifications
-
-This avoids repeatedly reading large files and provides instant context about the project.
+- **Runtime**: Node.js 22 (Docker, multi-stage build) / 24 (local via .mise.toml)
+- **Framework**: Express 5 (ES modules)
+- **Proxy**: http-proxy
+- **Terminal**: node-pty + ws (WebSocket)
+- **Browser**: Chromium (headless=new) with CDP, persistent instance
+- **Frontend**: Alpine.js (setup wizard), xterm.js (web TUI), vanilla CSS
+- **Package manager**: pnpm
+- **No build step**: All JS served directly, no transpilation
 
 ## Quirks & Gotchas
 
 1. **Gateway token must be stable across redeploys** → persisted to volume if not in env
 2. **Channels are written via `config set --json`, not `channels add`** → avoids CLI version incompatibilities
-3. **Gateway readiness check polls multiple endpoints** (`/openclaw`, `/`, `/health`) → some builds only expose certain routes (src/server.js:92)
-4. **Discord bots require MESSAGE CONTENT INTENT** → document this in setup wizard (src/server.js:295-298)
-5. **Gateway spawn inherits stdio** → logs appear in wrapper output (src/server.js:134)
-6. **WebSocket auth requires proxy event handlers** → Direct `req.headers` modification doesn't work for WebSocket upgrades with http-proxy; must use `proxyReqWs` event (src/server.js:741) to reliably inject Authorization header
-7. **Control UI requires allowInsecureAuth to bypass pairing** → Set `gateway.controlUi.allowInsecureAuth=true` during onboarding to prevent "disconnected (1008): pairing required" errors (GitHub issue #2284). Wrapper already handles bearer token auth, so device pairing is unnecessary.
+3. **Gateway readiness check polls multiple endpoints** (`/openclaw`, `/`, `/health`) → some builds only expose certain routes (src/server.js:184)
+4. **Discord bots require MESSAGE CONTENT INTENT** → documented in setup wizard
+5. **Gateway spawn inherits stdio** → logs appear in wrapper output (src/server.js:236)
+6. **WebSocket auth requires proxy event handlers** → Direct `req.headers` modification doesn't work for WebSocket upgrades with http-proxy; must use `proxyReqWs` event (src/server.js:1143) to reliably inject Authorization header
+7. **Control UI requires allowInsecureAuth to bypass pairing** → Set `gateway.controlUi.allowInsecureAuth=true` during onboarding to prevent "disconnected (1008): pairing required" errors. Wrapper already handles bearer token auth, so device pairing is unnecessary.
+8. **Hooks paths bypass auth injection** → `/hooks/*` requests are proxied without Bearer token (src/server.js:1137) to avoid overwriting webhook-specific auth
+9. **Gateway auto-restarts on crash** → 2s delay before restart attempt (src/server.js:260-269)
+10. **Allowed origins auto-sync** → `RAILWAY_PUBLIC_DOMAIN` is synced to `gateway.controlUi.allowedOrigins` before each gateway start (src/server.js:151-171)
+11. **Doctor runs on boot** → `openclaw doctor --fix` executes before gateway start when already configured (src/server.js:1187-1193)
+12. **Single TUI session** → Only one web terminal session at a time; returns 409 if occupied
+13. **Docker sandbox disabled** → Railway has no Docker-in-Docker; `agents.defaults.sandbox.mode=off` and `tools.exec.host=gateway` are set during onboarding. Without `tools.exec.host=gateway`, exec tool still tries sandbox mode (OpenClaw bug #4689).
+14. **CLI shim intercepts gateway commands** → `/usr/local/bin/openclaw` is a shim script that redirects `gateway restart/stop/status` to wrapper API. Real CLI at `$OPENCLAW_REAL_ENTRY`. This prevents agent loops where they repeatedly try `openclaw gateway restart` and fail.
+15. **Browser uses persistent Chromium** → `browser.attachOnly=true` connects to a single Chromium instance (started by entrypoint.sh) instead of spawning new browsers per request. Profile persisted to volume at `/data/.chromium-profile`.
+16. **Chromium requires --no-sandbox in Docker** → The container itself provides isolation; Chromium's internal sandbox needs `SYS_ADMIN` capability which is not available.

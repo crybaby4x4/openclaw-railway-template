@@ -147,6 +147,9 @@ const OPENCLAW_ENTRY =
   process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 
+const CHROMIUM_CDP_PORT = process.env.CHROMIUM_CDP_PORT || "9223";
+const REMOTE_CDP_URL = process.env.REMOTE_CDP_URL?.trim() || "";
+
 const ENABLE_WEB_TUI = process.env.ENABLE_WEB_TUI?.toLowerCase() === "true";
 const TUI_IDLE_TIMEOUT_MS = Number.parseInt(
   process.env.TUI_IDLE_TIMEOUT_MS ?? "300000",
@@ -930,41 +933,42 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     const ok = onboard.code === 0 && isConfigured();
 
     if (ok) {
-      extra += "\n[setup] Configuring gateway settings...\n";
+      extra += "\n[setup] Configuring gateway + sandbox + browser settings...\n";
 
-      const allowInsecureResult = await runCmd(
-        OPENCLAW_NODE,
-        clawArgs([
-          "config",
-          "set",
-          "gateway.controlUi.allowInsecureAuth",
-          "true",
-        ]),
-      );
-      extra += `[config] gateway.controlUi.allowInsecureAuth=true exit=${allowInsecureResult.code}\n`;
+      // Build browser config (local CDP + optional remote profile)
+      const browserConfig = {
+        enabled: true,
+        attachOnly: true,
+        defaultProfile: "local",
+        profiles: {
+          local: { cdpUrl: `http://127.0.0.1:${CHROMIUM_CDP_PORT}` },
+        },
+      };
+      if (REMOTE_CDP_URL) {
+        browserConfig.profiles.remote = { cdpUrl: REMOTE_CDP_URL };
+        browserConfig.defaultProfile = "remote";
+      }
 
-      const tokenResult = await runCmd(
-        OPENCLAW_NODE,
-        clawArgs([
-          "config",
-          "set",
-          "gateway.auth.token",
-          OPENCLAW_GATEWAY_TOKEN,
-        ]),
-      );
-      extra += `[config] gateway.auth.token exit=${tokenResult.code}\n`;
-
-      const proxiesResult = await runCmd(
-        OPENCLAW_NODE,
-        clawArgs([
-          "config",
-          "set",
-          "--json",
-          "gateway.trustedProxies",
-          '["127.0.0.1"]',
-        ]),
-      );
-      extra += `[config] gateway.trustedProxies exit=${proxiesResult.code}\n`;
+      // Run all independent config writes in parallel
+      const configLabels = [
+        "gateway.controlUi.allowInsecureAuth=true",
+        "gateway.auth.token",
+        "gateway.trustedProxies",
+        "agents.defaults.sandbox.mode=off",
+        "tools.exec.host=gateway",
+        "browser (attachOnly + CDP profiles)",
+      ];
+      const configResults = await Promise.all([
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1"]'])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "agents.defaults.sandbox.mode", "off"])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "tools.exec.host", "gateway"])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "browser", JSON.stringify(browserConfig)])),
+      ]);
+      for (let i = 0; i < configResults.length; i++) {
+        extra += `[config] ${configLabels[i]} exit=${configResults[i].code}\n`;
+      }
 
       if (payload.model?.trim()) {
         extra += `[setup] Setting model to ${payload.model.trim()}...\n`;
@@ -1109,11 +1113,27 @@ app.post("/setup/api/gateway/restart", requireSetupAuth, async (_req, res) => {
     if (!isConfigured()) {
       return res.status(400).json({ ok: false, error: "Not configured. Run setup first." });
     }
+    log.info("gateway", "manual restart requested via API");
     await restartGateway();
     return res.json({ ok: true, output: "Gateway restarted successfully." });
   } catch (err) {
     log.error("gateway", `restart failed: ${err.message}`);
     return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/setup/api/gateway/stop", requireSetupAuth, async (_req, res) => {
+  try {
+    log.info("gateway", "manual stop requested via API");
+    if (gatewayProc) {
+      gatewayProc.kill("SIGTERM");
+      await sleep(750);
+      gatewayProc = null;
+    }
+    res.json({ ok: true, output: "Gateway stopped." });
+  } catch (err) {
+    log.error("gateway", `stop failed: ${err.message}`);
+    res.status(500).json({ ok: false, output: `Stop failed: ${err.message}` });
   }
 });
 
