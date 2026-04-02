@@ -47,6 +47,7 @@ printf '%s\n' 'export PNPM_STORE_DIR="/data/pkg/pnpm-store"' >> "${ZSHRC_BASE_PA
 printf '%s\n' 'export PYTHONUSERBASE="/data/pkg/python-user"' >> "${ZSHRC_BASE_PATH}"
 printf '%s\n' 'export PIP_CACHE_DIR="/data/pkg/pip-cache"' >> "${ZSHRC_BASE_PATH}"
 printf '%s\n' 'export HOMEBREW_CACHE="${HOME}/.cache/Homebrew"' >> "${ZSHRC_BASE_PATH}"
+printf '%s\n' 'export DISPLAY=":99"' >> "${ZSHRC_BASE_PATH}"
 printf '%s\n' '' >> "${ZSHRC_BASE_PATH}"
 printf '%s\n' '# --- oh-my-zsh ---' >> "${ZSHRC_BASE_PATH}"
 printf '%s\n' 'export ZSH="/opt/oh-my-zsh"' >> "${ZSHRC_BASE_PATH}"
@@ -95,6 +96,19 @@ fi
 if [ -d /data/.linuxbrew ]; then
   rm -rf /home/linuxbrew/.linuxbrew 2>/dev/null || true
   ln -sfn /data/.linuxbrew /home/linuxbrew/.linuxbrew 2>/dev/null || true
+fi
+
+# Start Xvfb virtual display for headless GUI tools (Chromium non-headless, Playwright, etc.)
+export DISPLAY=:99
+if command -v Xvfb >/dev/null 2>&1; then
+  Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+  XVFB_PID=$!
+  sleep 0.3
+  if kill -0 "$XVFB_PID" 2>/dev/null; then
+    echo "[entrypoint] Xvfb started on display :99 (PID=$XVFB_PID)"
+  else
+    echo "[entrypoint] WARNING: Xvfb failed to start"
+  fi
 fi
 
 # Start persistent Chromium CDP instance for OpenClaw browser tool

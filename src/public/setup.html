@@ -33,6 +33,8 @@
       showPairingModal: false,
       isReady: false,
       tuiEnabled: false,
+      codeServerEnabled: false,
+      codeServerBasePath: '/vscode',
       exporting: false,
       showExportInfo: false,
       showDevicesModal: false,
@@ -66,6 +68,8 @@
           this.configured = j.configured;
           this.openclawVersion = j.openclawVersion || '';
           this.tuiEnabled = j.tuiEnabled || false;
+          this.codeServerEnabled = j.codeServerEnabled || false;
+          this.codeServerBasePath = j.codeServerBasePath || '/vscode';
           this.status = j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below';
           this.authGroups = j.authGroups || [];
           if (this.authGroups.length > 0) {
@@ -391,6 +395,10 @@
         <a x-show="tuiEnabled" href="/tui" target="_blank" class="inline-link link-purple">
           Open Terminal
           <svg class="icon-link" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        </a>
+        <a x-show="codeServerEnabled" :href="codeServerBasePath" target="_blank" class="inline-link link-blue">
+          Open VSCode
+          <svg class="icon-link" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
         </a>
       </div>
     </div>

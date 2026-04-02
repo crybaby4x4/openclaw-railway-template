@@ -44,8 +44,6 @@ const WORKSPACE_DIR =
   path.join(STATE_DIR, "workspace");
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
-const INTERNAL_RESTART_TOKEN =
-  process.env.INTERNAL_RESTART_TOKEN?.trim() || "";
 
 const LOG_FILE = path.join(STATE_DIR, "server.log");
 const LOG_RING_BUFFER_MAX = 1000;
@@ -591,54 +589,6 @@ function isLoopbackAddress(addr) {
   );
 }
 
-function requireInternalRestartAuth(req, res, next) {
-  if (!INTERNAL_RESTART_TOKEN) {
-    return res.status(503).json({
-      ok: false,
-      error: "Internal restart endpoint is disabled. Set INTERNAL_RESTART_TOKEN.",
-    });
-  }
-
-  const remoteAddr = req.socket?.remoteAddress || "";
-  if (!isLoopbackAddress(remoteAddr)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Forbidden: internal restart endpoint only accepts loopback requests.",
-    });
-  }
-
-  const authHeader = req.headers.authorization || "";
-  const bearerPrefix = "Bearer ";
-  const bearerToken = authHeader.startsWith(bearerPrefix)
-    ? authHeader.slice(bearerPrefix.length).trim()
-    : "";
-  const tokenFromHeader = req.headers["x-internal-restart-token"];
-  const providedToken =
-    (typeof tokenFromHeader === "string" && tokenFromHeader.trim()) ||
-    bearerToken;
-
-  if (!providedToken) {
-    return res.status(401).json({
-      ok: false,
-      error:
-        "Missing token. Provide Authorization: Bearer <token> or x-internal-restart-token header.",
-    });
-  }
-
-  const providedHash = crypto
-    .createHash("sha256")
-    .update(providedToken)
-    .digest();
-  const expectedHash = crypto
-    .createHash("sha256")
-    .update(INTERNAL_RESTART_TOKEN)
-    .digest();
-  if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
-    return res.status(401).json({ ok: false, error: "Invalid token." });
-  }
-  return next();
-}
-
 const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
@@ -1137,24 +1087,6 @@ app.post("/setup/api/gateway/stop", requireSetupAuth, async (_req, res) => {
   }
 });
 
-app.post(
-  "/internal/api/gateway/restart",
-  requireInternalRestartAuth,
-  async (_req, res) => {
-    try {
-      if (!isConfigured()) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "Not configured. Run setup first." });
-      }
-      await restartGateway();
-      return res.json({ ok: true, output: "Gateway restarted successfully." });
-    } catch (err) {
-      log.error("gateway", `internal restart failed: ${err.message}`);
-      return res.status(500).json({ ok: false, error: err.message });
-    }
-  },
-);
 
 app.get("/setup/api/devices", requireSetupAuth, async (_req, res) => {
   const args = ["devices", "list", "--json", "--token", OPENCLAW_GATEWAY_TOKEN];

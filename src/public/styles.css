@@ -215,12 +215,16 @@ img { max-width: 100%; height: auto; }
 .link-teal:hover { color: #14b8a6; }
 .link-purple { color: #9333ea; transition: color 0.15s; }
 .link-purple:hover { color: #a855f7; }
+.link-blue { color: #2563eb; transition: color 0.15s; }
+.link-blue:hover { color: #3b82f6; }
 
 @media (prefers-color-scheme: dark) {
   .link-teal { color: #2dd4bf; }
   .link-teal:hover { color: #5eead4; }
   .link-purple { color: #c084fc; }
   .link-purple:hover { color: #d8b4fe; }
+  .link-blue { color: #60a5fa; }
+  .link-blue:hover { color: #93bbfd; }
 }
 
 .inline-link {

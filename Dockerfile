@@ -53,7 +53,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g \
-    openclaw@2026.3.13 \
+    openclaw@2026.3.31 \
     clawhub@latest \
     @anthropic-ai/claude-code \
     @openai/codex \
@@ -80,7 +80,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package.json pnpm-lock.yaml ./
 COPY src ./src
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
-COPY --chmod=755 scripts/openclaw-gateway-restart /usr/local/bin/openclaw-gateway-restart
 COPY --chmod=755 src/openclaw-shim.sh /usr/local/bin/openclaw
 COPY .cursor/skills/container-ops/SKILL.md /opt/skills/container-ops/SKILL.md
 COPY .cursor/skills/workspace-templates/BOOTSTRAP.md /opt/skills/workspace/BOOTSTRAP.md
@@ -132,6 +131,7 @@ ENV HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"
 ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
 ENV OPENCLAW_REAL_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
+ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
