@@ -113,9 +113,14 @@ fi
 
 # Start persistent Chromium CDP instance for OpenClaw browser tool
 CHROMIUM_CDP_PORT=${CHROMIUM_CDP_PORT:-9223}
+export DBUS_SESSION_BUS_ADDRESS=/dev/null
 if [ "${CHROMIUM_ENABLED:-true}" = "true" ] && command -v chromium >/dev/null 2>&1; then
   mkdir -p /data/.chromium-profile
   chown openclaw:openclaw /data/.chromium-profile
+  # Remove stale lock/singleton files left by previous crashes
+  rm -f /data/.chromium-profile/SingletonLock \
+        /data/.chromium-profile/SingletonSocket \
+        /data/.chromium-profile/SingletonCookie 2>/dev/null || true
   gosu openclaw chromium \
     --remote-debugging-port="$CHROMIUM_CDP_PORT" \
     --remote-debugging-address=127.0.0.1 \
@@ -128,8 +133,15 @@ if [ "${CHROMIUM_ENABLED:-true}" = "true" ] && command -v chromium >/dev/null 2>
     --no-default-browser-check \
     --user-data-dir=/data/.chromium-profile \
     --disable-extensions \
+    --disable-features=dbus \
     about:blank &
-  echo "[entrypoint] Chromium CDP started on port $CHROMIUM_CDP_PORT (PID=$!)"
+  CHROMIUM_PID=$!
+  sleep 1
+  if kill -0 "$CHROMIUM_PID" 2>/dev/null; then
+    echo "[entrypoint] Chromium CDP started on port $CHROMIUM_CDP_PORT (PID=$CHROMIUM_PID)"
+  else
+    echo "[entrypoint] WARNING: Chromium failed to start (exited immediately)"
+  fi
 fi
 
 export HOME=/home/openclaw

@@ -333,11 +333,44 @@ async function startGateway() {
   });
 }
 
+async function ensureBrowserConfig() {
+  if (!isConfigured()) return;
+  try {
+    const cfgRaw = fs.readFileSync(configPath(), "utf8");
+    const cfg = JSON.parse(cfgRaw);
+    if (cfg.browser?.attachOnly === true) return;
+  } catch {}
+
+  log.info("browser", "browser.attachOnly not set — writing CDP config");
+  const browserConfig = {
+    enabled: true,
+    attachOnly: true,
+    defaultProfile: "local",
+    profiles: {
+      local: { cdpUrl: `http://127.0.0.1:${CHROMIUM_CDP_PORT}`, color: "#4A90D9" },
+    },
+  };
+  if (REMOTE_CDP_URL) {
+    browserConfig.profiles.remote = { cdpUrl: REMOTE_CDP_URL, color: "#E57373" };
+    browserConfig.defaultProfile = "remote";
+  }
+  const result = await runCmd(
+    OPENCLAW_NODE,
+    clawArgs(["config", "set", "--json", "browser", JSON.stringify(browserConfig)]),
+  );
+  if (result.code === 0) {
+    log.info("browser", "browser config written successfully");
+  } else {
+    log.error("browser", `failed to write browser config: ${result.output}`);
+  }
+}
+
 async function ensureGatewayRunning() {
   if (!isConfigured()) return { ok: false, reason: "not configured" };
   if (gatewayProc) return { ok: true };
   if (!gatewayStarting) {
     gatewayStarting = (async () => {
+      await ensureBrowserConfig();
       await syncAllowedOrigins();
       await startGateway();
       const ready = await waitForGatewayReady({ timeoutMs: 60_000 });
@@ -891,11 +924,11 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         attachOnly: true,
         defaultProfile: "local",
         profiles: {
-          local: { cdpUrl: `http://127.0.0.1:${CHROMIUM_CDP_PORT}` },
+          local: { cdpUrl: `http://127.0.0.1:${CHROMIUM_CDP_PORT}`, color: "#4A90D9" },
         },
       };
       if (REMOTE_CDP_URL) {
-        browserConfig.profiles.remote = { cdpUrl: REMOTE_CDP_URL };
+        browserConfig.profiles.remote = { cdpUrl: REMOTE_CDP_URL, color: "#E57373" };
         browserConfig.defaultProfile = "remote";
       }
 
