@@ -76,15 +76,16 @@ open http://localhost:8080/setup  # password: test
 
 ### Key Files
 
-- **src/server.js** (1,283 lines, main entry): Express wrapper, proxy setup, gateway lifecycle, setup API, web TUI, logging
+- **src/server.js** (main entry): Express wrapper, proxy setup, gateway lifecycle, setup API, web TUI, logging
+- **src/openclaw-shim.sh**: CLI shim that intercepts `openclaw gateway restart/stop` and redirects to wrapper API (see Gateway CLI Shim section)
 - **src/public/** (static assets):
   - **setup.html**: Setup wizard UI (Alpine.js, multi-step onboarding)
   - **styles.css**: Shared CSS (light/dark mode via CSS variables, Space Grotesk font)
   - **tui.html**: Web terminal UI (xterm.js-based)
   - **loading.html**: Loading/error fallback page (shown when gateway unavailable)
   - **logs.html**: Real-time log viewer (SSE-based)
-- **Dockerfile**: Node 22-bookworm base, installs OpenClaw `2026.3.8`, Linuxbrew, creates non-root `openclaw` user
-- **entrypoint.sh**: Persists Linuxbrew to volume, runs server as `openclaw` user via `gosu`
+- **Dockerfile**: Multi-stage build (builder compiles node-pty, runtime uses bookworm-slim + Chromium + Linuxbrew)
+- **entrypoint.sh**: Persists Linuxbrew to volume, starts persistent Chromium CDP instance, runs server as `openclaw` user via `gosu`
 - **railway.toml**: Railway deployment config (Dockerfile builder, health check at `/setup/healthz`)
 
 ### Environment Variables
@@ -104,6 +105,9 @@ open http://localhost:8080/setup  # password: test
 - `OPENCLAW_ENTRY` — path to `entry.js` (default `/openclaw/dist/entry.js`)
 - `OPENCLAW_NODE` — node executable (default `node`)
 - `OPENCLAW_CONFIG_PATH` — override config file path (default `${STATE_DIR}/openclaw.json`)
+- `CHROMIUM_CDP_PORT` — persistent Chromium CDP port (default 9223)
+- `CHROMIUM_ENABLED` — start local Chromium instance (default `true`)
+- `REMOTE_CDP_URL` — remote browser CDP URL; when set, becomes default browser profile
 - `ENABLE_WEB_TUI` — enable web terminal at `/tui` (default `false`)
 - `TUI_IDLE_TIMEOUT_MS` — TUI idle timeout (default 300000 = 5 min)
 - `TUI_MAX_SESSION_MS` — TUI max session duration (default 1800000 = 30 min)
@@ -122,13 +126,42 @@ The wrapper manages a **two-layer auth scheme**:
 
 3. **Rate limiting**: 50 requests per 60s per IP on setup endpoints (src/server.js:313-336)
 
+### Gateway CLI Shim
+
+**Problem**: OpenClaw's AI agents read official docs and try `openclaw gateway restart`, which fails because the wrapper manages the gateway process (not OpenClaw's PID-based mechanism).
+
+**Solution**: A shim script (`src/openclaw-shim.sh`) is installed at `/usr/local/bin/openclaw` and intercepts:
+- `openclaw gateway restart` → calls wrapper API `POST /setup/api/gateway/restart`
+- `openclaw gateway stop` → calls wrapper API `POST /setup/api/gateway/stop`
+- `openclaw gateway status` → calls wrapper API `GET /setup/healthz`
+- All other commands → pass through to real OpenClaw CLI at `$OPENCLAW_REAL_ENTRY`
+
+The shim uses `SETUP_PASSWORD` env var for Basic auth against the wrapper API. This is transparent to agents — they see `openclaw gateway restart` succeed as expected.
+
+### Sandbox & Browser Configuration
+
+**Railway limitation**: OpenClaw's sandbox and browser sandbox are Docker-based (require Docker-in-Docker). Railway doesn't provide Docker daemon access, so both are configured for direct execution:
+
+**Sandbox** (set during onboarding):
+- `agents.defaults.sandbox.mode` = `"off"` — disables Docker-based sandboxing
+- `tools.exec.host` = `"gateway"` — tools run directly on host (workaround for OpenClaw bug #4689)
+
+**Browser** (set during onboarding):
+- `browser.enabled` = `true`
+- `browser.attachOnly` = `true` — connects to existing Chromium instance instead of spawning new ones
+- `browser.defaultProfile` = `"local"` (or `"remote"` if `REMOTE_CDP_URL` is set)
+- `browser.profiles.local.cdpUrl` = `http://127.0.0.1:9223` — persistent Chromium started by entrypoint.sh
+- `browser.profiles.remote.cdpUrl` = `$REMOTE_CDP_URL` (optional, for external browser services with noVNC)
+
+**Chromium instance**: Started by `entrypoint.sh` with `--headless=new` (new headless mode, functionally equivalent to headed browser), persists profile to `/data/.chromium-profile`.
+
 ### Onboarding Process
 
-When the user runs setup (src/server.js:640-776):
+When the user runs setup (src/server.js):
 
 1. Validates payload (auth choice, string fields)
 2. Calls `openclaw onboard --non-interactive` with user-selected auth provider
-3. Sets gateway config: `allowInsecureAuth=true`, auth token, trusted proxies
+3. **In parallel** sets: gateway config (`allowInsecureAuth`, auth token, trusted proxies), sandbox mode (`off`), exec host (`gateway`), browser config (`attachOnly` + CDP profiles)
 4. Optionally sets model via `openclaw models set`
 5. Writes channel configs (Telegram/Discord/Slack) directly via `openclaw config set --json`
 6. Restarts gateway process
@@ -178,6 +211,8 @@ All under `/setup/api/*`, require Basic auth:
 | `/setup/api/run` | POST | Execute onboarding |
 | `/setup/api/reset` | POST | Delete config file |
 | `/setup/api/doctor` | POST | Run `openclaw doctor --repair` |
+| `/setup/api/gateway/restart` | POST | Restart gateway via wrapper (used by CLI shim) |
+| `/setup/api/gateway/stop` | POST | Stop gateway via wrapper (used by CLI shim) |
 | `/setup/api/devices` | GET | List paired devices |
 | `/setup/api/devices/approve` | POST | Approve device pairing |
 | `/setup/api/devices/reject` | POST | Reject device pairing |
@@ -240,13 +275,16 @@ Edit `buildOnboardArgs()` (src/server.js:528-576) to add new CLI flags or auth p
 - Health check at `/setup/healthz` with 300s timeout
 - Linuxbrew is persisted to `/data/.linuxbrew` via entrypoint.sh symlink
 - Container runs as non-root `openclaw` user via `gosu`
+- **No Docker-in-Docker**: Railway doesn't provide Docker daemon access, so OpenClaw's Docker-based sandbox and browser sandbox are disabled; tools run directly on host, browser uses a local Chromium CDP instance
+- **Chromium**: Persistent headless Chromium instance started by entrypoint.sh, profile persisted to `/data/.chromium-profile`
 
 ## Tech Stack
 
-- **Runtime**: Node.js 22 (Docker) / 24 (local via .mise.toml)
+- **Runtime**: Node.js 22 (Docker, multi-stage build) / 24 (local via .mise.toml)
 - **Framework**: Express 5 (ES modules)
 - **Proxy**: http-proxy
 - **Terminal**: node-pty + ws (WebSocket)
+- **Browser**: Chromium (headless=new) with CDP, persistent instance
 - **Frontend**: Alpine.js (setup wizard), xterm.js (web TUI), vanilla CSS
 - **Package manager**: pnpm
 - **No build step**: All JS served directly, no transpilation
@@ -265,3 +303,7 @@ Edit `buildOnboardArgs()` (src/server.js:528-576) to add new CLI flags or auth p
 10. **Allowed origins auto-sync** → `RAILWAY_PUBLIC_DOMAIN` is synced to `gateway.controlUi.allowedOrigins` before each gateway start (src/server.js:151-171)
 11. **Doctor runs on boot** → `openclaw doctor --fix` executes before gateway start when already configured (src/server.js:1187-1193)
 12. **Single TUI session** → Only one web terminal session at a time; returns 409 if occupied
+13. **Docker sandbox disabled** → Railway has no Docker-in-Docker; `agents.defaults.sandbox.mode=off` and `tools.exec.host=gateway` are set during onboarding. Without `tools.exec.host=gateway`, exec tool still tries sandbox mode (OpenClaw bug #4689).
+14. **CLI shim intercepts gateway commands** → `/usr/local/bin/openclaw` is a shim script that redirects `gateway restart/stop/status` to wrapper API. Real CLI at `$OPENCLAW_REAL_ENTRY`. This prevents agent loops where they repeatedly try `openclaw gateway restart` and fail.
+15. **Browser uses persistent Chromium** → `browser.attachOnly=true` connects to a single Chromium instance (started by entrypoint.sh) instead of spawning new browsers per request. Profile persisted to volume at `/data/.chromium-profile`.
+16. **Chromium requires --no-sandbox in Docker** → The container itself provides isolation; Chromium's internal sandbox needs `SYS_ADMIN` capability which is not available.
