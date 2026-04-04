@@ -148,6 +148,12 @@ const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 const CHROMIUM_CDP_PORT = process.env.CHROMIUM_CDP_PORT || "9223";
 const REMOTE_CDP_URL = process.env.REMOTE_CDP_URL?.trim() || "";
 
+const ACPX_MAX_WORKERS = Number.parseInt(process.env.ACPX_MAX_WORKERS ?? "3", 10);
+const ACPX_DEFAULT_PROVIDERS = (process.env.ACPX_DEFAULT_PROVIDERS || "claude-code,codex,gemini-cli")
+  .split(",").map(s => s.trim()).filter(Boolean);
+const PROXY_TIMEOUT = Number.parseInt(process.env.PROXY_TIMEOUT ?? "300000", 10);
+const GATEWAY_MAX_MEMORY = process.env.GATEWAY_MAX_MEMORY ?? "2048";
+
 const ENABLE_WEB_TUI = process.env.ENABLE_WEB_TUI?.toLowerCase() === "true";
 const TUI_IDLE_TIMEOUT_MS = Number.parseInt(
   process.env.TUI_IDLE_TIMEOUT_MS ?? "300000",
@@ -299,7 +305,8 @@ async function startGateway() {
     "--allow-unconfigured",
   ];
 
-  gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
+  const nodeArgs = [`--max-old-space-size=${GATEWAY_MAX_MEMORY}`, ...clawArgs(args)];
+  gatewayProc = childProcess.spawn(OPENCLAW_NODE, nodeArgs, {
     stdio: "inherit",
     env: buildRuntimeEnv(),
   });
@@ -307,7 +314,7 @@ async function startGateway() {
   const safeArgs = args.map((arg, i) =>
     args[i - 1] === "--token" ? "[REDACTED]" : arg
   );
-  log.info("gateway", `starting with command: ${OPENCLAW_NODE} ${clawArgs(safeArgs).join(" ")}`);
+  log.info("gateway", `starting with command: ${OPENCLAW_NODE} --max-old-space-size=${GATEWAY_MAX_MEMORY} ${clawArgs(safeArgs).join(" ")}`);
   log.info("gateway", `STATE_DIR: ${STATE_DIR}`);
   log.info("gateway", `WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   log.info("gateway", `config path: ${configPath()}`);
@@ -877,12 +884,30 @@ if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
     "discordToken",
     "slackBotToken",
     "slackAppToken",
+    "feishuAppId",
+    "feishuAppSecret",
+    "weixinApiKey",
+    "weixinProxyUrl",
     "authSecret",
     "model",
   ];
   for (const field of stringFields) {
     if (payload[field] !== undefined && typeof payload[field] !== "string") {
       return `Invalid ${field}: must be a string`;
+    }
+  }
+  if (payload.acpxEnabled !== undefined && typeof payload.acpxEnabled !== "boolean") {
+    return "Invalid acpxEnabled: must be a boolean";
+  }
+  if (payload.acpxMaxWorkers !== undefined) {
+    const w = Number(payload.acpxMaxWorkers);
+    if (!Number.isInteger(w) || w < 1 || w > 8) {
+      return "Invalid acpxMaxWorkers: must be an integer between 1 and 8";
+    }
+  }
+  if (payload.acpxProviders !== undefined) {
+    if (!Array.isArray(payload.acpxProviders) || payload.acpxProviders.some(p => typeof p !== "string")) {
+      return "Invalid acpxProviders: must be an array of strings";
     }
   }
   return null;
@@ -932,6 +957,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         browserConfig.defaultProfile = "remote";
       }
 
+      // Build ACPX config from payload or env defaults
+      const acpxEnabled = payload.acpxEnabled !== undefined ? payload.acpxEnabled : true;
+      const acpxConfig = {
+        enabled: acpxEnabled,
+        maxWorkers: payload.acpxMaxWorkers || ACPX_MAX_WORKERS,
+        providers: payload.acpxProviders?.length ? payload.acpxProviders : ACPX_DEFAULT_PROVIDERS,
+      };
+
       // Run all independent config writes in parallel
       const configLabels = [
         "gateway.controlUi.allowInsecureAuth=true",
@@ -940,6 +973,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         "agents.defaults.sandbox.mode=off",
         "tools.exec.host=gateway",
         "browser (attachOnly + CDP profiles)",
+        "agents.defaults.acpx",
       ];
       const configResults = await Promise.all([
         runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"])),
@@ -948,6 +982,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "agents.defaults.sandbox.mode", "off"])),
         runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "tools.exec.host", "gateway"])),
         runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "browser", JSON.stringify(browserConfig)])),
+        runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "agents.defaults.acpx", JSON.stringify(acpxConfig)])),
       ]);
       for (let i = 0; i < configResults.length; i++) {
         extra += `[config] ${configLabels[i]} exit=${configResults[i].code}\n`;
@@ -1007,6 +1042,31 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           enabled: true,
           botToken: payload.slackBotToken?.trim() || undefined,
           appToken: payload.slackAppToken?.trim() || undefined,
+        });
+      }
+
+      if (payload.feishuAppId?.trim() && payload.feishuAppSecret?.trim()) {
+        extra += await configureChannel("feishu", {
+          enabled: true,
+          domain: "feishu",
+          connectionMode: "websocket",
+          defaultAccount: "main",
+          dmPolicy: "pairing",
+          groupPolicy: "open",
+          accounts: {
+            main: {
+              appId: payload.feishuAppId.trim(),
+              appSecret: payload.feishuAppSecret.trim(),
+            },
+          },
+        });
+      }
+
+      if (payload.weixinApiKey?.trim()) {
+        extra += await configureChannel("weixin", {
+          enabled: true,
+          apiKey: payload.weixinApiKey.trim(),
+          proxyUrl: payload.weixinProxyUrl?.trim() || undefined,
         });
       }
 
@@ -1420,8 +1480,8 @@ const proxy = httpProxy.createProxyServer({
   ws: true,
   xfwd: true,
   changeOrigin: true,
-  proxyTimeout: 120_000,
-  timeout: 120_000,
+  proxyTimeout: PROXY_TIMEOUT,
+  timeout: PROXY_TIMEOUT,
 });
 
 const codeProxy = httpProxy.createProxyServer({
@@ -1429,8 +1489,8 @@ const codeProxy = httpProxy.createProxyServer({
   ws: true,
   xfwd: true,
   changeOrigin: true,
-  proxyTimeout: 120_000,
-  timeout: 120_000,
+  proxyTimeout: PROXY_TIMEOUT,
+  timeout: PROXY_TIMEOUT,
 });
 
 proxy.on("error", (err, _req, res) => {
