@@ -134,6 +134,12 @@ if [ "${CHROMIUM_ENABLED:-true}" = "true" ] && command -v chromium >/dev/null 2>
     --user-data-dir=/data/.chromium-profile \
     --disable-extensions \
     --disable-features=dbus \
+    --disable-background-networking \
+    --disable-default-apps \
+    --disable-sync \
+    --disable-translate \
+    --metrics-recording-only \
+    --js-flags="--max-old-space-size=512" \
     about:blank &
   CHROMIUM_PID=$!
   sleep 1

@@ -12,7 +12,7 @@
   document.addEventListener('alpine:init', () => {
     Alpine.data('setupApp', () => ({
       step: 1,
-      totalSteps: 3,
+      totalSteps: 4,
       status: 'Loading...',
       configured: false,
       openclawVersion: '',
@@ -26,6 +26,9 @@
       slackBotToken: '',
       slackAppToken: '',
       model: '',
+      acpxEnabled: true,
+      acpxMaxWorkers: 3,
+      acpxProviders: ['claude-code', 'codex', 'gemini-cli'],
       log: '',
       loading: false,
       pairingChannel: '',
@@ -110,7 +113,10 @@
           telegramToken: this.telegramToken,
           discordToken: this.discordToken,
           slackBotToken: this.slackBotToken,
-          slackAppToken: this.slackAppToken
+          slackAppToken: this.slackAppToken,
+          acpxEnabled: this.acpxEnabled,
+          acpxMaxWorkers: this.acpxMaxWorkers,
+          acpxProviders: this.acpxProviders
         };
 
         this.log = 'Running...\n';
@@ -627,6 +633,46 @@
 
       <div x-show="step === 3" x-transition:enter="fade-slide-enter" x-transition:enter-start="fade-slide-start" x-transition:enter-end="fade-slide-end">
         <div class="card">
+          <h2 class="card-title">Code Agents (ACPX)</h2>
+          <p class="card-subtitle">Configure parallel code agent execution for multi-agent workflows</p>
+
+          <div class="form-group">
+            <label class="label" style="display:flex;align-items:center;gap:0.75rem;cursor:pointer">
+              <input type="checkbox" x-model="acpxEnabled" style="width:1.25rem;height:1.25rem;accent-color:var(--primary)" />
+              Enable ACPX (parallel code agents)
+            </label>
+            <p class="form-hint">When enabled, OpenClaw can spawn multiple code agents to work on tasks in parallel</p>
+          </div>
+
+          <div x-show="acpxEnabled" style="display:flex;flex-direction:column;gap:1rem">
+            <div class="form-group">
+              <label class="label">Max Workers</label>
+              <input x-model.number="acpxMaxWorkers" type="number" min="1" max="8" class="input" style="max-width:8rem" />
+              <p class="form-hint">Maximum parallel code agent workers (1-8). Higher values use more CPU/memory.</p>
+            </div>
+
+            <div class="form-group">
+              <label class="label">Code Agent Providers</label>
+              <p class="form-hint" style="margin-bottom:0.5rem">Select which code agents ACPX can use. All listed agents are pre-installed in this container.</p>
+              <label style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;cursor:pointer">
+                <input type="checkbox" value="claude-code" x-model="acpxProviders" style="width:1.1rem;height:1.1rem;accent-color:var(--primary)" />
+                <span><strong>Claude Code</strong> — Anthropic Claude</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;cursor:pointer">
+                <input type="checkbox" value="codex" x-model="acpxProviders" style="width:1.1rem;height:1.1rem;accent-color:var(--primary)" />
+                <span><strong>Codex</strong> — OpenAI Codex</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;cursor:pointer">
+                <input type="checkbox" value="gemini-cli" x-model="acpxProviders" style="width:1.1rem;height:1.1rem;accent-color:var(--primary)" />
+                <span><strong>Gemini CLI</strong> — Google Gemini</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="step === 4" x-transition:enter="fade-slide-enter" x-transition:enter-start="fade-slide-start" x-transition:enter-end="fade-slide-end">
+        <div class="card">
           <h2 class="card-title">Run Setup</h2>
           <p class="card-subtitle">Review your configuration and start OpenClaw</p>
 
@@ -652,6 +698,13 @@
                   <span x-show="discordToken" class="badge badge-indigo">Discord</span>
                   <span x-show="slackBotToken && slackAppToken" class="badge badge-green">Slack</span>
                   <span x-show="!telegramToken && !discordToken && !(slackBotToken && slackAppToken)" class="text-muted">None</span>
+                </dd>
+              </div>
+              <div class="config-row">
+                <dt>ACPX</dt>
+                <dd>
+                  <span x-show="acpxEnabled" x-text="acpxProviders.join(', ') + ' (' + acpxMaxWorkers + ' workers)'"></span>
+                  <span x-show="!acpxEnabled" class="text-muted">Disabled</span>
                 </dd>
               </div>
             </dl>
