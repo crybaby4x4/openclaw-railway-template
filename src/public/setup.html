@@ -13,33 +13,51 @@
     Alpine.data('setupApp', () => ({
       step: 1,
       totalSteps: 4,
+
+      // --- Status ---
       status: 'Loading...',
       configured: false,
       openclawVersion: '',
+      isReady: false,
+
+      // --- Step 1: Auth ---
       authGroups: [],
       selectedGroup: '',
       authChoices: [],
       selectedAuth: '',
       authSecret: '',
+      model: '',
+
+      // --- Step 2: Channels ---
       telegramToken: '',
       discordToken: '',
       slackBotToken: '',
       slackAppToken: '',
-      model: '',
+      feishuAppId: '',
+      feishuAppSecret: '',
+      weixinApiKey: '',
+      weixinProxyUrl: '',
+
+      // --- Step 3: ACPX (parallel code agents) ---
       acpxEnabled: true,
       acpxMaxWorkers: 3,
       acpxProviders: ['claude-code', 'codex', 'gemini-cli'],
+
+      // --- UI state ---
       log: '',
       loading: false,
-      pairingChannel: '',
-      pairingCode: '',
-      showPairingModal: false,
-      isReady: false,
       tuiEnabled: false,
       codeServerEnabled: false,
       codeServerBasePath: '/vscode',
       exporting: false,
       showExportInfo: false,
+
+      // --- Pairing ---
+      pairingChannel: '',
+      pairingCode: '',
+      showPairingModal: false,
+
+      // --- Devices ---
       showDevicesModal: false,
       devicesLoading: false,
       devices: [],
@@ -114,6 +132,10 @@
           discordToken: this.discordToken,
           slackBotToken: this.slackBotToken,
           slackAppToken: this.slackAppToken,
+          feishuAppId: this.feishuAppId,
+          feishuAppSecret: this.feishuAppSecret,
+          weixinApiKey: this.weixinApiKey,
+          weixinProxyUrl: this.weixinProxyUrl,
           acpxEnabled: this.acpxEnabled,
           acpxMaxWorkers: this.acpxMaxWorkers,
           acpxProviders: this.acpxProviders
@@ -149,8 +171,8 @@
 
       async approvePairing() {
         const channel = this.pairingChannel.trim().toLowerCase();
-        if (channel !== 'telegram' && channel !== 'discord') {
-          alert('Channel must be "telegram" or "discord"');
+        if (!['telegram', 'discord', 'feishu', 'weixin'].includes(channel)) {
+          alert('Please select a valid channel');
           return;
         }
         const code = this.pairingCode.trim();
@@ -628,6 +650,34 @@
               <input x-model="slackAppToken" type="password" placeholder="App token (xapp-...)" class="input" style="margin-top:0.75rem" />
             </div>
           </div>
+
+          <div class="form-group">
+            <div class="channel-card channel-feishu">
+              <div class="channel-header">
+                <div class="channel-icon">
+                  <svg class="icon-md" viewBox="0 0 24 24" fill="currentColor"><path d="M6.3 3.6c1.2-1.5 3-2.4 4.95-2.55.15 1.95-.6 3.9-1.95 5.25-1.35 1.5-3.45 2.4-5.4 2.25-.15-1.8.6-3.6 2.4-4.95zm5.7 6.15c-1.5 0-2.7 1.2-2.7 2.7v7.8c0 1.5 1.2 2.7 2.7 2.7h5.7c1.5 0 2.7-1.2 2.7-2.7v-5.1l-3.6-5.4H12z"/></svg>
+                </div>
+                <span class="channel-name">Feishu</span>
+              </div>
+              <input x-model="feishuAppId" type="text" placeholder="App ID (cli_xxx)" class="input" />
+              <input x-model="feishuAppSecret" type="password" placeholder="App Secret" class="input" style="margin-top:0.75rem" />
+              <p class="form-hint">Create app at <a href="https://open.feishu.cn/app" target="_blank" style="color:var(--primary)">open.feishu.cn/app</a>. Use WebSocket (long-connection) event mode.</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="channel-card channel-weixin">
+              <div class="channel-header">
+                <div class="channel-icon">
+                  <svg class="icon-md" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.68 4.025c-2.203 0-4.446.818-5.891 2.188-1.49 1.414-2.373 3.48-1.462 5.766.757 1.9 2.614 3.32 4.779 3.96a10.39 10.39 0 002.574.322c.703 0 1.394-.095 2.065-.27a.67.67 0 01.551.075l1.467.858a.252.252 0 00.13.042.226.226 0 00.224-.228c0-.055-.023-.11-.037-.163l-.301-1.14a.455.455 0 01.164-.512C21.945 19.888 23 18.19 23 16.312c0-3.077-3.094-6.296-7.722-6.296zm-2.06 2.702c.496 0 .898.407.898.91a.904.904 0 01-.897.91.904.904 0 01-.898-.91c0-.503.402-.91.898-.91zm4.12 0c.496 0 .898.407.898.91a.904.904 0 01-.898.91.904.904 0 01-.898-.91c0-.503.402-.91.898-.91z"/></svg>
+                </div>
+                <span class="channel-name">WeChat</span>
+              </div>
+              <input x-model="weixinApiKey" type="password" placeholder="API Key (wc_live_xxx)" class="input" />
+              <input x-model="weixinProxyUrl" type="text" placeholder="Proxy URL (optional)" class="input" style="margin-top:0.75rem" />
+              <p class="form-hint">Run <code class="code-inline">npx -y @tencent-weixin/openclaw-weixin-cli@latest install</code> first for QR login.</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -697,7 +747,9 @@
                   <span x-show="telegramToken" class="badge badge-sky">Telegram</span>
                   <span x-show="discordToken" class="badge badge-indigo">Discord</span>
                   <span x-show="slackBotToken && slackAppToken" class="badge badge-green">Slack</span>
-                  <span x-show="!telegramToken && !discordToken && !(slackBotToken && slackAppToken)" class="text-muted">None</span>
+                  <span x-show="feishuAppId && feishuAppSecret" class="badge badge-sky">Feishu</span>
+                  <span x-show="weixinApiKey" class="badge badge-green">WeChat</span>
+                  <span x-show="!telegramToken && !discordToken && !(slackBotToken && slackAppToken) && !(feishuAppId && feishuAppSecret) && !weixinApiKey" class="text-muted">None</span>
                 </dd>
               </div>
               <div class="config-row">
@@ -842,6 +894,8 @@
             <option value="">Select channel...</option>
             <option value="telegram">Telegram</option>
             <option value="discord">Discord</option>
+            <option value="feishu">Feishu</option>
+            <option value="weixin">WeChat</option>
           </select>
         </div>
         <div class="form-group">

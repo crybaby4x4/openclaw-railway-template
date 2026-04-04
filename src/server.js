@@ -884,6 +884,10 @@ if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
     "discordToken",
     "slackBotToken",
     "slackAppToken",
+    "feishuAppId",
+    "feishuAppSecret",
+    "weixinApiKey",
+    "weixinProxyUrl",
     "authSecret",
     "model",
   ];
@@ -1038,6 +1042,31 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           enabled: true,
           botToken: payload.slackBotToken?.trim() || undefined,
           appToken: payload.slackAppToken?.trim() || undefined,
+        });
+      }
+
+      if (payload.feishuAppId?.trim() && payload.feishuAppSecret?.trim()) {
+        extra += await configureChannel("feishu", {
+          enabled: true,
+          domain: "feishu",
+          connectionMode: "websocket",
+          defaultAccount: "main",
+          dmPolicy: "pairing",
+          groupPolicy: "open",
+          accounts: {
+            main: {
+              appId: payload.feishuAppId.trim(),
+              appSecret: payload.feishuAppSecret.trim(),
+            },
+          },
+        });
+      }
+
+      if (payload.weixinApiKey?.trim()) {
+        extra += await configureChannel("weixin", {
+          enabled: true,
+          apiKey: payload.weixinApiKey.trim(),
+          proxyUrl: payload.weixinProxyUrl?.trim() || undefined,
         });
       }
 
